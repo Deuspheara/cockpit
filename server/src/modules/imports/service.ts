@@ -263,7 +263,8 @@ export class ImportService {
     )
       .trim()
       .toLowerCase()
-      .replace(/\s+/g, " ");
+      .replace(/\s+/g, " ")
+      .replace(/\bhealth\s+care\b/g, "healthcare");
   }
   private score(
     candidate: MarketCandidate,
@@ -274,6 +275,7 @@ export class ImportService {
         .toLowerCase()
         .normalize("NFKD")
         .replace(/[^a-z0-9]+/g, " ")
+        .replace(/\bhealth\s+care\b/g, "healthcare")
         .trim();
     // An explicit identifier must not compete with a similar fund name.
     if (position.isin)
@@ -388,6 +390,26 @@ export class ImportService {
           .slice(0, 5).map((item) => item.candidate),
       };
     return { status: "matched" as const, candidate: first.candidate };
+  }
+  async matchingChoices(id: string, candidateId: string, query?: string) {
+    const session = await this.get(id);
+    const position = session.extraction?.positions.find((p) => p.candidateId?.toLowerCase() === candidateId.toLowerCase());
+    if (!position) throw new NotFoundError("Import position not found");
+    const searchPosition = query ? { ...position, name: query,
+      isin: /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(query) ? query.toUpperCase() : null,
+      symbol: /^[A-Z0-9.-]{1,12}$/i.test(query) && !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(query) ? query : null,
+    } : position;
+    const search = this.instrumentQuery(searchPosition);
+    const candidates = await this.market?.search(search) ?? [];
+    const ranked = candidates.map((candidate) => ({ candidate, score: this.score(candidate, searchPosition) }))
+      .sort((a, b) => b.score - a.score || Number(b.candidate.currency === position.currency) - Number(a.candidate.currency === position.currency));
+    const unique = ranked.filter((item, index, all) => all.findIndex((other) =>
+      (other.candidate.isin || other.candidate.providerKey) === (item.candidate.isin || item.candidate.providerKey)) === index).slice(0, 5);
+    return { choices: unique.map(({ candidate: c, score }, index) => ({
+      symbol: c.symbol, name: c.name, isin: c.isin, exchange: c.exchange, currency: c.currency,
+      recommended: index === 0 && score >= 0.72 && (!unique[1] || score - unique[1].score >= 0.12),
+      reason: score >= 0.72 ? "Matches the investment label. Check the share class and listing." : "Possible result. Check against your screenshot.",
+    })), message: unique.length ? null : "No matching investments were returned. Try a shorter name, ticker or ISIN. Market search may also be temporarily unavailable." };
   }
   private async conversionRate(from: string, to: string, at: string) {
     if (from === to) return "1";

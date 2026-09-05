@@ -50,3 +50,9 @@ HTTP 200 is transport success, not proof of a complete portfolio. Top-level `err
 Failures distinguish rejected credentials, rate limiting, unreadable responses, incomplete data, and local persistence errors. In particular, a database failure is `SYNC_SAVE_FAILED`, not `ALCHEMY_UNAVAILABLE`. Retry uses the existing saved wallet.
 
 References checked 2026-09-05: [Tokens By Wallet](https://www.alchemy.com/docs/data/portfolio-apis/portfolio-api-endpoints/portfolio-api-endpoints/get-tokens-by-address), [partial-failure handling](https://www.alchemy.com/docs/reference/portfolio-apis#handling-partial-failures).
+
+## Guided holding review
+
+Continue reviews unresolved holdings one at a time. Ordinary holdings have separate investment-selection and value-review steps, with a persistent action and an explicit close action. Saving a resolved row advances to the next unresolved item; closing without saving returns to the holdings list. Financial changes still require Apply.
+
+`GET /api/v1/imports/:id/positions/:candidateId/matches?query=...` supports name, ticker, or ISIN searches for existing import rows, including rows with no stored candidates. It deduplicates listings by ISIN, ranks matches, and highlights a suggestion only above the matching threshold with a sufficient lead over alternatives. Suggestions are never silently selected or applied. Empty results offer search refinement and manual ticker entry instead of repeating an unresolvable Save loop. This feature requires both the backend and iOS update.

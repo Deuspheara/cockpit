@@ -167,6 +167,11 @@ export async function registerImportRoutes(
         .parse(request.body).message,
     ),
   );
+  app.get("/api/v1/imports/:id/positions/:candidateId/matches", (request) => {
+    const params = z.object({ id: z.uuid().toLowerCase(), candidateId: z.uuid().toLowerCase() }).parse(request.params);
+    const query = z.object({ query: z.string().trim().min(1).max(200).optional() }).parse(request.query);
+    return imports.matchingChoices(params.id, params.candidateId, query.query);
+  });
   const editableText = z.string().trim().max(1000).nullable();
   const editableAmount = decimalString.nullable();
   app.patch("/api/v1/imports/:id", (request) => {

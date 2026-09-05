@@ -11,6 +11,8 @@ struct ImportSessionDTO: Decodable, Sendable {
         let isin: String?
         let exchange: String
         let currency: String?
+        let recommended: Bool?
+        let reason: String?
       }
       let matchCandidates: [Match]?
       let candidateId: UUID?
@@ -110,6 +112,8 @@ struct ImportView: View {
   @State private var job: ImportJobDTO?
   @State private var stage: ImportStage = .upload
   @State private var editor: ImportEditor?
+  @State private var guidedReview = false
+  @State private var advanceAfterEditor = false
   @State private var accounts: [Account] = []
   @State private var destinationID: UUID?
   @State private var accountName = ""
@@ -156,15 +160,29 @@ struct ImportView: View {
       .disabled(working || job?.isActive == true || (stage == .upload && session?.extraction == nil))
       .padding().background(.bar)
     }
-    .sheet(item: $editor) { item in
+    .sheet(item: $editor, onDismiss: {
+      if advanceAfterEditor {
+        advanceAfterEditor = false
+        Task { await advance() }
+      } else { guidedReview = false }
+    }) { item in
       NavigationStack {
         if let session {
-          ScrollView {
-            switch item {
-            case .position(let position): ImportPositionEditor(session: session, position: position) { self.session = $0 }
-            case .derivative(let derivative): ImportDerivativeEditor(session: session, derivative: derivative) { self.session = $0 }
+          switch item {
+          case .position(let position):
+            ImportPositionEditor(session: session, position: position) { updated in
+              self.session = updated
+              advanceAfterEditor = guidedReview && (updated.extraction?.positions.first(where: { $0.candidateId == position.candidateId }).map { updated.remainingIssues(for: $0).isEmpty } ?? true)
             }
-          }.padding().navigationTitle("Edit holding")
+          case .derivative(let derivative):
+            ScrollView {
+              ImportDerivativeEditor(session: session, derivative: derivative) { updated in
+                self.session = updated
+                advanceAfterEditor = guidedReview && (updated.extraction?.derivatives.first(where: { $0.candidateId == derivative.candidateId }).map { updated.remainingIssues(for: $0).isEmpty } ?? true)
+              }
+            }.padding().navigationTitle("Review derivative")
+          }
+
         }
       }
     }
@@ -221,7 +239,7 @@ struct ImportView: View {
       holdingSections
       if !blockers.isEmpty {
         Section {
-          Text("A few details will help finish this import. Continue opens the next item to check.")
+          Text("We’ll review the remaining details together, one holding at a time.")
             .font(.callout).foregroundStyle(.secondary)
         }
       }
@@ -368,6 +386,7 @@ struct ImportView: View {
         self.session = try await api.send("imports/\(session.id)", method: "PATCH", body: ["revision": .number(Decimal(session.revision)), "accountId": destinationID.map { .string($0.uuidString) } ?? .null, "likelyAccountName": .string(accountName), "capturedAt": .string(observedAt.ISO8601Format())])
         stage = .holdings
       case .holdings:
+        guidedReview = true
         if let p = session?.extraction?.positions.first(where: needsAttention) { editor = .position(p); return }
         if let d = session?.extraction?.derivatives.first(where: derivativeNeedsAttention) { editor = .derivative(d); return }
         guard blockers.isEmpty, let session else { throw APIError(message: blockers.first ?? "Review missing information.") }

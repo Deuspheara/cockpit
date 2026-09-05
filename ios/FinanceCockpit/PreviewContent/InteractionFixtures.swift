@@ -91,6 +91,9 @@
         PortfolioScope(rawValue: query.first { $0.name == "scope" }?.value ?? "global") ?? .global
       if path == "imports" { return try importResponse() }
       if path.hasPrefix("imports/") {
+        if path.hasSuffix("/matches") {
+          return try encode(["choices": JSONValue.array(ProcessInfo.processInfo.arguments.contains("--empty-matches") ? [] : [.object(["symbol": .string("EUNL"), "name": .string("iShares Core MSCI World"), "isin": .string("IE00B4L5Y983"), "exchange": .string("XETRA"), "currency": .string("EUR"), "recommended": .bool(true), "reason": .string("Matches the investment label.")])]), "message": .string("Check the share class against your screenshot.")])
+        }
         if path.contains("/cancel") { importCancelled = true; return try encode(importJob()) }
         if path.hasSuffix("/jobs") { jobReads = 0; return try encode(importJob()) }
         if path.hasSuffix("/prepare-change-set") { importPrepared = true; return try encode(importChange()) }
@@ -174,7 +177,7 @@
         row["symbol"] = .null
         row["name"] = .string("Core MSCI World USD (Acc)")
         row["matchStatus"] = .string("ambiguous")
-        row["matchCandidates"] = .array([.object(["symbol": .string("EUNL"), "name": .string("iShares Core MSCI World"), "isin": .string("IE00B4L5Y983"), "exchange": .string("XETRA"), "currency": .string("EUR")])])
+        row["matchCandidates"] = .array([])
         rows[0] = .object(row)
         extraction["positions"] = .array(rows)
         result["extraction"] = .object(extraction)

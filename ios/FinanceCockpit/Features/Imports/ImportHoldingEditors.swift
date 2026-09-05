@@ -6,6 +6,16 @@ struct ImportPositionEditor: View {
   let onSaved: (ImportSessionDTO) -> Void
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
+  private enum Step { case investment, value }
+  private struct SearchResponse: Decodable {
+    let choices: [ImportSessionDTO.Extraction.Candidate.Match]
+    let message: String?
+  }
+  @State private var step: Step
+  @State private var choices: [ImportSessionDTO.Extraction.Candidate.Match]
+  @State private var searching = false
+  @State private var searchGeneration = 0
+  @State private var searchMessage: String?
   @State private var selectedMatch: ImportSessionDTO.Extraction.Candidate.Match?
   @State private var name: String
   @State private var symbol: String
@@ -22,6 +32,8 @@ struct ImportPositionEditor: View {
     _session = State(initialValue: session)
     _position = State(initialValue: position)
     self.onSaved = onSaved
+    _step = State(initialValue: (position.symbol ?? "").isEmpty || position.matchStatus == "ambiguous" ? .investment : .value)
+    _choices = State(initialValue: position.matchCandidates ?? [])
     _name = State(initialValue: position.name ?? "")
     _symbol = State(initialValue: position.symbol ?? "")
     _quantity = State(initialValue: position.quantity.map(Self.decimal) ?? "")
@@ -30,81 +42,125 @@ struct ImportPositionEditor: View {
   }
 
   var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Group {
-        HStack(alignment: .top, spacing: 10) {
-          VStack(alignment: .leading, spacing: 5) {
-            Text(position.name ?? position.symbol ?? "Unknown instrument").font(.subheadline.weight(.semibold))
-            HStack(spacing: 6) {
-              ImportBadge(text: "From screenshot", color: .secondary)
-              if position.quantitySource == "estimated" { ImportBadge(text: "Estimated", color: .blue) }
-              if position.symbol == nil || position.matchStatus == "ambiguous" {
-                ImportBadge(text: "Confirm investment", color: .secondary)
-              } else if position.matchStatus == "matched" {
-                ImportBadge(text: "Matched", color: .green)
-              } else {
-                ImportBadge(text: "From its label", color: .secondary)
-              }
-              if position.sourceLines > 1 { ImportBadge(text: "\(position.sourceLines) lines combined", color: .secondary) }
-            }
-
-          }
-          Spacer()
-          VStack(alignment: .trailing, spacing: 4) {
-            Text(position.marketValue.map { FinanceFormat.amount($0, currency: currency) } ?? "Value unknown")
-              .monospacedDigit()
-            Text(position.quantity.map { "\(FinanceFormat.quantity($0)) units" } ?? "Quantity unknown")
-              .font(.caption).foregroundStyle(.secondary)
-          }
+    ScrollView {
+      VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: 8) {
+          Text(step == .investment ? "1 · Choose the investment" : "2 · Check the value")
+            .font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+          Text(position.name ?? position.symbol ?? "Your holding")
+            .font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
+          Text(position.marketValue.map { FinanceFormat.amount($0, currency: currency) } ?? "Value to confirm")
+            .font(.title3).monospacedDigit()
         }
-        .contentShape(Rectangle())
-      }
-      Group {
-        if position.symbol == nil || position.matchStatus == "ambiguous" {
-          TextField("Investment name", text: $name).textFieldStyle(.roundedBorder)
-          Text("We’ll look up the investment from its name. You don’t need to know its ticker.")
-            .font(.callout).foregroundStyle(.secondary)
-        }
-        if let matches = position.matchCandidates, !matches.isEmpty {
-          Text("Choose the investment shown in your screenshot").font(.callout)
-          ForEach(Array(matches.enumerated()), id: \.offset) { _, match in
-            Button {
-              selectedMatch = match
-              name = match.name
-              symbol = match.symbol
-            } label: {
-              VStack(alignment: .leading) {
-                Text(match.name)
-                Text([match.symbol, match.exchange, match.isin, match.currency].compactMap { $0 }.joined(separator: " · "))
-                  .font(.caption).foregroundStyle(.secondary)
-                if selectedMatch?.symbol == match.symbol && selectedMatch?.isin == match.isin { Text("Selected").font(.caption) }
-              }
-            }.buttonStyle(.bordered)
-          }
-        }
-        LabeledContent("Position value") {
-          TextField("Value", text: $value).keyboardType(.decimalPad).multilineTextAlignment(.trailing)
-        }
-        LabeledContent("Currency") {
-          TextField("Currency", text: $currency).textInputAutocapitalization(.characters).multilineTextAlignment(.trailing)
-        }
-        Text("Quantity is estimated from the position value and an available share price. If there’s no suitable price, you can still save the value.")
-          .font(.callout).foregroundStyle(.secondary)
-        DisclosureGroup("Edit quantity or ticker") {
-          TextField("Quantity (optional)", text: $quantity).keyboardType(.decimalPad).accessibilityIdentifier("import-quantity")
-          TextField("Ticker (optional)", text: $symbol).textInputAutocapitalization(.characters)
-        }
-        if let at = position.quoteAt, let price = position.quotePrice {
-          Text("Estimate uses \(FinanceFormat.amount(price, currency: position.quoteCurrency ?? currency)) · \(at.formatted(date: .abbreviated, time: .omitted))")
-            .font(.caption).foregroundStyle(.secondary)
-        }
-        Button(working ? "Saving…" : "Save") { Task { await save() } }
-          .disabled(working)
-        if let error { Text(error).font(.caption).foregroundStyle(.red) }
+        if step == .investment { investmentChoices } else { valueFields }
+        if let error { Text(error).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
+      }.padding(20)
+    }
+    .navigationTitle("Review holding")
+    .navigationBarTitleDisplayMode(.inline)
+    .toolbar {
+      ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() }.disabled(working) }
+      if step == .value {
+        ToolbarItem(placement: .topBarTrailing) { Button("Change investment") { step = .investment; selectedMatch = nil; searchGeneration += 1 } }
       }
     }
-    .padding(12)
-    .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 14))
+    .safeAreaInset(edge: .bottom) {
+      Button {
+        if step == .investment { step = .value; error = nil }
+        else { Task { await save() } }
+      } label: {
+        HStack { Spacer(); if working { ProgressView() }; Text(step == .investment ? "Continue" : "Save and continue").bold(); Spacer() }.padding(8)
+      }
+      .buttonStyle(.borderedProminent)
+      .accessibilityIdentifier("import-review-next")
+      .disabled(working || searching || (step == .investment && selectedMatch == nil))
+      .padding().background(.bar)
+    }
+    .interactiveDismissDisabled(working)
+    .task(id: searchGeneration) {
+      if step == .investment { await search() }
+    }
+  }
+  private var investmentChoices: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Select the fund shown in your screenshot. A suggestion is highlighted only when one match stands out.")
+        .font(.callout).foregroundStyle(.secondary)
+      HStack {
+        TextField("Name, ticker or ISIN", text: $name)
+          .textFieldStyle(.roundedBorder).submitLabel(.search)
+          .onSubmit { selectedMatch = nil; searchGeneration += 1 }
+          .onChange(of: name) { selectedMatch = nil }
+        Button { selectedMatch = nil; searchGeneration += 1 } label: { Image(systemName: "magnifyingglass").frame(width: 44, height: 44) }
+          .accessibilityLabel("Search investments").disabled(searching)
+      }
+      if searching { ProgressView("Finding investments…") }
+      ForEach(Array(choices.enumerated()), id: \.offset) { _, match in
+        let selected = selectedMatch?.symbol == match.symbol && selectedMatch?.isin == match.isin && selectedMatch?.exchange == match.exchange
+        Button {
+          selectedMatch = match
+          symbol = match.symbol
+          error = nil
+        } label: {
+          HStack(alignment: .top, spacing: 12) {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+              .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+            VStack(alignment: .leading, spacing: 7) {
+              if match.recommended == true { Text("Suggested match").font(.caption.bold()).foregroundStyle(Color.accentColor) }
+              Text(match.name).font(.headline).foregroundStyle(.primary)
+              Text("\(match.symbol) · \(match.exchange) · \(match.currency ?? "")").font(.subheadline).foregroundStyle(.secondary)
+              if let isin = match.isin { Text(isin).font(.caption).foregroundStyle(.secondary) }
+              if let reason = match.reason { Text(reason).font(.caption).foregroundStyle(.secondary) }
+            }.fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+          }
+          .padding(16).frame(maxWidth: .infinity, alignment: .leading)
+          .background((selected || match.recommended == true ? Color.accentColor : Color.primary).opacity(0.07), in: .rect(cornerRadius: 16))
+          .overlay(RoundedRectangle(cornerRadius: 16).stroke(selected ? Color.accentColor : Color.secondary.opacity(0.2), lineWidth: selected ? 2 : 1))
+          .contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityAddTraits(selected ? .isSelected : [])
+      }
+      if let searchMessage { Text(searchMessage).font(.callout).foregroundStyle(.secondary) }
+      if choices.isEmpty && !searching {
+        Button("Enter the ticker manually") { step = .value }
+      }
+    }
+  }
+  private var valueFields: some View {
+    VStack(alignment: .leading, spacing: 18) {
+      if let selectedMatch {
+        Label(selectedMatch.name, systemImage: "checkmark.circle.fill").font(.headline)
+        Text("\(selectedMatch.symbol) · \(selectedMatch.exchange)").font(.caption).foregroundStyle(.secondary)
+      }
+      VStack(alignment: .leading, spacing: 8) {
+        Text("Position value").font(.subheadline.weight(.medium))
+        TextField("Value", text: $value).keyboardType(.decimalPad).textFieldStyle(.roundedBorder)
+      }
+      VStack(alignment: .leading, spacing: 8) {
+        Text("Currency").font(.subheadline.weight(.medium))
+        TextField("Currency", text: $currency).textInputAutocapitalization(.characters).textFieldStyle(.roundedBorder)
+      }
+      Text("We keep the visible quantity, or estimate it from this value when a suitable share price is available.")
+        .font(.callout).foregroundStyle(.secondary)
+      DisclosureGroup("Edit quantity or ticker") {
+        VStack(spacing: 12) {
+          TextField("Quantity (optional)", text: $quantity).keyboardType(.decimalPad).accessibilityIdentifier("import-quantity")
+          TextField("Ticker", text: $symbol).textInputAutocapitalization(.characters)
+        }.textFieldStyle(.roundedBorder).padding(.top, 12)
+      }
+    }
+  }
+  private func search() async {
+    guard let api = environment.api, let id = position.candidateId else { return }
+    searching = true; searchMessage = nil
+    defer { searching = false }
+    do {
+      let response: SearchResponse = try await api.send("imports/\(session.id)/positions/\(id)/matches", query: [URLQueryItem(name: "query", value: name)])
+      try Task.checkCancellation()
+      choices = response.choices
+      searchMessage = response.message
+    } catch {
+      if !Task.isCancelled { searchMessage = "Search is unavailable right now. Try again, or enter an exact ticker manually." }
+    }
   }
 
   private func save() async {
@@ -113,7 +169,7 @@ struct ImportPositionEditor: View {
     defer { working = false }
     do {
       var correction = position.correction(name: name, symbol: symbol, quantity: quantity, value: value, currency: currency)
-      if let selectedMatch, selectedMatch.name == name, selectedMatch.symbol == symbol {
+      if let selectedMatch, selectedMatch.symbol == symbol {
         correction["isin"] = selectedMatch.isin.map(JSONValue.string) ?? .null
         correction["symbol"] = .string(selectedMatch.symbol)
         correction["name"] = .string(selectedMatch.name)
@@ -135,7 +191,12 @@ struct ImportPositionEditor: View {
         currency = latest.currency ?? updated.extraction?.currency ?? currency
         let issues = updated.remainingIssues(for: latest)
         if !issues.isEmpty {
-          error = "Changes saved. " + issues.joined(separator: " ")
+          error = issues.joined(separator: " ")
+          if (latest.symbol ?? "").isEmpty || latest.matchStatus == "ambiguous" {
+            step = .investment
+            selectedMatch = nil
+            searchGeneration += 1
+          }
           return
         }
       }
@@ -288,7 +349,7 @@ extension ImportSessionDTO.Extraction.Candidate {
       edit["isin"] = .null
       edit["symbol"] = .null
     }
-    if clean(symbol) != (self.symbol ?? "") { edit["symbol"] = optional(clean(symbol)) }
+    if clean(symbol) != (self.symbol ?? "") { edit["symbol"] = optional(clean(symbol)); edit["isin"] = .null }
     if amount(quantity) != decimal(self.quantity) { edit["quantity"] = optional(amount(quantity)) }
     if amount(value) != decimal(marketValue) { edit["marketValue"] = optional(amount(value)) }
     if clean(currency).uppercased() != self.currency { edit["currency"] = optional(clean(currency).uppercased()) }

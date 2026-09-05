@@ -39,7 +39,7 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
     quotedAt: "2026-09-04T00:00:00Z",
     isPrimary: false,
   };
-  function setup(unitPrice: string | null = null, ambiguous = false) {
+  function setup(unitPrice: string | null = null, ambiguous = false, unavailable = false) {
     const model = new OpenRouterClient(config, async () =>
       Response.json({
         choices: [
@@ -80,6 +80,7 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
     const service = new ImportService(db, model, new ChangeSetService(db), {
       search: async () => {
         calls++;
+        if (unavailable) return [];
         return [
           {
             ...candidate,
@@ -132,6 +133,13 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
       result.blockers.every((message) => !message.includes("needs a quantity")),
     ).toBe(true);
     const row = result.extraction!.positions[0]!;
+    const choices = await service.matchingChoices(created.id, row.candidateId!, "Core MSCI World USD (Acc)");
+    expect(choices.choices).toHaveLength(2);
+    expect(choices.choices.every((choice) => !choice.recommended)).toBe(true);
+    const exactChoice = await service.matchingChoices(created.id, row.candidateId!, "IE00B4L5Y983");
+    expect(exactChoice.choices[0]).toMatchObject({ symbol: "EUNL", recommended: true });
+    await expect(service.matchingChoices(created.id, "00000000-0000-4000-8000-000000000000")).rejects.toThrow("not found");
+
     expect(row.matchCandidates).toHaveLength(2);
     expect(result.candidateIssues[row.candidateId!]).not.toEqual([]);
     const saved = await service.update(created.id, result.revision, {
@@ -147,6 +155,15 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
     expect(resolved.blockers).toEqual([]);
     expect(resolved.extraction!.positions[0]!.quantity).toBe("25");
     await expect(service.prepare(created.id)).resolves.toBeDefined();
+  });
+  it("provides a search recovery message when an unmatched holding has no candidates", async () => {
+    const { service } = setup(null, false, true);
+    const created = await service.create();
+    const result = await service.extract(created.id, { bytes: Buffer.from("fixture"), mime: "image/png" });
+    const choices = await service.matchingChoices(created.id, result.extraction!.positions[0]!.candidateId!, "MSCI World Health Care USD");
+    expect(choices.choices).toEqual([]);
+    expect(choices.message).toContain("Try a shorter name, ticker or ISIN");
+    expect(result.blockers.length).toBeGreaterThan(0);
   });
   it("accepts uppercase iOS row IDs for both stocks and puts and keeps no-op edits estimated", async () => {
     const { service, model } = setup("125");

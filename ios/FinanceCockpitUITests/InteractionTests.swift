@@ -166,9 +166,11 @@ import XCTest
 }
 
 @MainActor final class ScreenshotWizardTests: XCTestCase {
-  func testUnresolvedFundStaysOpenUntilMatchingChoiceIsSaved() {
+  func testUnresolvedFundSearchSelectionAndGuidedContinue() { guidedSelection(largeText: false) }
+  func testGuidedSelectionWithLargeText() { guidedSelection(largeText: true) }
+  private func guidedSelection(largeText: Bool) {
     let app = XCUIApplication()
-    app.launchArguments = ["--ui-fixtures", "--fresh-import", "--unresolved-import"]
+    app.launchArguments = ["--ui-fixtures", "--fresh-import", "--unresolved-import", "--dark"] + (largeText ? ["--large-text"] : [])
     app.launch()
     XCTAssertTrue(app.buttons["Add"].waitForExistence(timeout: 15))
     app.buttons["Add"].tap()
@@ -178,19 +180,19 @@ import XCTest
     XCTAssertTrue(app.staticTexts["Account & Date"].waitForExistence(timeout: 10))
     app.buttons["Continue"].tap()
     app.buttons["Continue"].tap()
-    XCTAssertTrue(app.buttons["Save"].waitForExistence(timeout: 5))
-    app.swipeUp()
-    app.buttons["Save"].tap()
-    XCTAssertTrue(app.staticTexts["Changes saved. Choose the exact investment."].waitForExistence(timeout: 5))
-    app.swipeDown()
-    app.buttons.containing(.staticText, identifier: "iShares Core MSCI World").firstMatch.tap()
-    app.swipeUp()
-    app.buttons["Save"].tap()
-    XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
-    app.buttons["Continue"].tap()
+    XCTAssertTrue(app.staticTexts["Suggested match"].waitForExistence(timeout: 5))
+    let choice = app.buttons.containing(.staticText, identifier: "iShares Core MSCI World").firstMatch
+    for _ in 0..<4 { if choice.isHittable { break }; app.swipeUp() }
+    choice.tap()
+    let capture = XCTAttachment(screenshot: app.screenshot())
+    capture.name = largeText ? "Guided selection large text" : "Guided investment selection"
+    capture.lifetime = .keepAlways
+    add(capture)
+    app.buttons["import-review-next"].tap()
+    XCTAssertTrue(app.buttons["Save and continue"].waitForExistence(timeout: 5))
+    app.buttons["Save and continue"].tap()
     XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 5))
   }
-
   func testReviewEditBackApplyUndoWithLargeText() {
     let app = XCUIApplication()
     app.launchArguments = ["--ui-fixtures", "--fresh-import", "--large-text"]
@@ -208,7 +210,7 @@ import XCTest
     app.buttons["Edit quantity or ticker"].tap()
     XCTAssertTrue(app.textFields["import-quantity"].waitForExistence(timeout: 5))
     app.swipeUp()
-    app.buttons["Save"].tap()
+    app.buttons["Save and continue"].tap()
     XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
     app.buttons["Continue"].tap()
     XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 5))
