@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -11,8 +12,17 @@ struct AgentView: View {
   @State private var nearBottom = true
   @State private var userScrolling = false
   @State private var text = ""
-  @State private var importPresented = false
   @State private var restored = false
+  @State private var photoPickerPresented = false
+  @State private var selectedPhotos: [PhotosPickerItem] = []
+  @State private var importSessions: [UUID: ImportSessionDTO] = [:]
+  @State private var activeImportID: UUID?
+  @State private var importPhase: String?
+  @State private var importSteps: [AgentToolStep] = []
+  @State private var importError: String?
+
+  private let startsWithImport: Bool
+  private let importAccountID: UUID?
 
   private let suggestions = [
     "Summarize my portfolio",
@@ -20,15 +30,21 @@ struct AgentView: View {
     "Help me correct a position",
   ]
 
-  init(messages: [AgentMessage] = [], working: Bool = false) {
+  init(
+    messages: [AgentMessage] = [], working: Bool = false,
+    startImport: Bool = false, accountID: UUID? = nil
+  ) {
     let model = AgentModel()
     model.messages = messages
     model.phase = working ? "thinking" : "idle"
     _model = State(initialValue: model)
+    startsWithImport = startImport
+    importAccountID = accountID
   }
 
   private var messages: [AgentMessage] { model.messages }
-  private var working: Bool { model.working || model.activeAttempt != nil }
+  private var agentWorking: Bool { model.working || model.activeAttempt != nil }
+  private var working: Bool { agentWorking || importPhase != nil }
 
   var body: some View {
     Group {
@@ -67,10 +83,18 @@ struct AgentView: View {
         }
       }
     }
-    .sheet(isPresented: $importPresented) { NavigationStack { ImportView() } }
+    .photosPicker(
+      isPresented: $photoPickerPresented, selection: $selectedPhotos,
+      maxSelectionCount: 5, matching: .images)
+    .onChange(of: selectedPhotos) { _, photos in
+      if !photos.isEmpty { Task { await upload(photos) } }
+    }
     .task {
       await environment.testConnection()
-      if environment.sessionInfo?.ai.chatConfigured == true { await restore() }
+      if environment.sessionInfo?.ai.chatConfigured == true {
+        await restore()
+        if startsWithImport && importPhase == nil { photoPickerPresented = true }
+      }
     }
     .onChange(of: environment.sessionInfo?.ai.chatConfigured) { _, ready in
       if ready == true && !restored { Task { await restore() } }
@@ -85,12 +109,25 @@ struct AgentView: View {
             assistantWelcome
           }
           ForEach(messages.filter { $0.role != "tool" }) { message in
-            AgentMessageView(
-              message: message, steps: message.attemptId.flatMap { model.steps[$0] } ?? []
-            )
-            .id(message.id)
+            if message.kind == "screenshot_import", let id = message.importSessionId {
+              ScreenshotAttachmentMessage()
+                .id(message.id)
+              if let session = importSessions[id] {
+                importCard(session)
+              }
+            } else {
+              AgentMessageView(
+                message: message, steps: message.attemptId.flatMap { model.steps[$0] } ?? []
+              )
+              .id(message.id)
+            }
           }
-          if working {
+          ForEach(orphanImports, id: \.id) { session in
+            ScreenshotAttachmentMessage()
+            importCard(session)
+          }
+          if !importSteps.isEmpty { AgentToolActivity(steps: importSteps) }
+          if agentWorking {
             HStack(spacing: 9) {
               ProgressView().controlSize(.small)
               Text(
@@ -107,6 +144,7 @@ struct AgentView: View {
           if let error = model.error {
             Text(error).font(.callout).foregroundStyle(.red)
           }
+          if let importError { Text(importError).font(.callout).foregroundStyle(.red) }
           if model.canRetry { Button("Retry response") { model.retry() } }
           if model.phase == "disconnected" || model.phase == "failed" {
             Button("Reconnect") { Task { await model.restore() } }
@@ -195,13 +233,15 @@ struct AgentView: View {
     GlassEffectContainer(spacing: 10) {
       HStack(alignment: .bottom, spacing: 8) {
         Button {
-          importPresented = true
+          activeImportID = nil
+          photoPickerPresented = true
         } label: {
           AppIcon(name: .attachment, size: 21)
             .frame(width: 44, height: 44)
         }
         .accessibilityLabel("Import screenshot")
         .accessibilityHint("Adds portfolio evidence using the vision model")
+        .disabled(working || !environment.aiAvailability.visionConfigured)
 
         TextField("Ask anything", text: $text, axis: .vertical)
           .lineLimit(1...6)
@@ -212,22 +252,23 @@ struct AgentView: View {
           .onSubmit { Task { await send() } }
 
         Button {
-          if working { Task { await model.stop() } } else { Task { await send() } }
+          if agentWorking { Task { await model.stop() } } else { Task { await send() } }
         } label: {
-          Image(systemName: working ? "stop.fill" : "arrow.up")
+          Image(systemName: agentWorking ? "stop.fill" : "arrow.up")
             .font(.system(size: 20, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: 42, height: 42)
             .background(Color.accentColor, in: Circle())
         }
-        .accessibilityLabel(working ? "Stop response" : "Send")
+        .accessibilityLabel(agentWorking ? "Stop response" : "Send")
         .disabled(
-          working
+          importPhase != nil
+            || (agentWorking
             ? model.phase == "stopping"
-            : (!model.canSend || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            : (!model.canSend || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
         )
         .opacity(
-          !working && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
+          !agentWorking && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
       }
       .padding(6)
       .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 25))
@@ -242,9 +283,11 @@ struct AgentView: View {
     restored = true
     model.configure(api: api, server: environment.serverURL)
     await model.restore()
+    await loadImports()
   }
   private func resetConversation() {
     model.reset()
+    importSessions = [:]
     text = ""
     composerFocused = true
   }
@@ -257,6 +300,130 @@ struct AgentView: View {
     }
     text = ""
     model.send(input)
+  }
+
+  private var orphanImports: [ImportSessionDTO] {
+    let linked = Set(messages.compactMap(\.importSessionId))
+    return importSessions.values.filter { !linked.contains($0.id) }.sorted { $0.id.uuidString < $1.id.uuidString }
+  }
+
+  @ViewBuilder private func importCard(_ session: ImportSessionDTO) -> some View {
+    ImportConversationCard(
+      session: session,
+      onSessionChange: { importSessions[session.id] = $0 },
+      onAddScreenshots: {
+        activeImportID = session.id
+        photoPickerPresented = true
+      })
+      .id("import-\(session.id)-\(session.revision)")
+  }
+
+  private func loadImports() async {
+    guard let api = environment.api else { return }
+    for id in Set(messages.compactMap(\.importSessionId)) {
+      do {
+        let session: ImportSessionDTO = try await api.send("imports/\(id)")
+        importSessions[id] = session
+      } catch { importError = error.localizedDescription }
+    }
+  }
+
+  private func upload(_ items: [PhotosPickerItem]) async {
+    guard let api = environment.api else { return }
+    importError = nil
+    importSteps = []
+    defer {
+      importPhase = nil
+      selectedPhotos = []
+      activeImportID = nil
+    }
+    do {
+      let session: ImportSessionDTO
+      if let id = activeImportID, let existing = importSessions[id] {
+        session = existing
+      } else {
+        advanceImport("Starting screenshot import")
+        session = try await model.createImport(accountID: importAccountID)
+        importSessions[session.id] = session
+      }
+      var current = session
+      for item in items {
+        advanceImport("Uploading screenshot")
+        guard let original = try await item.loadTransferable(type: Data.self),
+          let image = UIImage(data: original)
+        else { throw APIError(message: "This image could not be read.") }
+        var data = image.pngData()
+        var mime = "image/png"
+        if data == nil || (data?.count ?? 0) > 12 * 1024 * 1024 {
+          let scale = min(1, 4000 / max(image.size.width, image.size.height))
+          let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+          let format = UIGraphicsImageRendererFormat()
+          format.scale = 1
+          let resized = UIGraphicsImageRenderer(size: size, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+          }
+          data = resized.jpegData(compressionQuality: 0.9)
+          mime = "image/jpeg"
+        }
+        guard let bytes = data, bytes.count <= 12 * 1024 * 1024 else {
+          throw APIError(message: "The screenshot is too large. Crop it to the financial lines.")
+        }
+        advanceImport("Extracting visible holdings")
+        current = try await api.uploadScreenshot(id: current.id, data: bytes, mime: mime)
+        importSessions[current.id] = current
+        completeImportStep("Matching assets", summary: "Canonical instruments checked")
+        completeImportStep("Estimating quantities", summary: "Dated prices and FX applied where eligible")
+      }
+      advanceImport("Preparing editable summary")
+      await model.restore()
+      await loadImports()
+      finishImportSteps()
+    } catch {
+      failImportStep(error.localizedDescription)
+      importError = error.localizedDescription
+    }
+  }
+
+  private func advanceImport(_ label: String) {
+    if let index = importSteps.lastIndex(where: { $0.status == "running" }) {
+      importSteps[index].status = "completed"
+    }
+    importPhase = label
+    importSteps.append(
+      AgentToolStep(id: UUID(), name: "screenshot_import", label: label, status: "running"))
+  }
+  private func completeImportStep(_ label: String, summary: String) {
+    if let index = importSteps.lastIndex(where: { $0.status == "running" }) {
+      importSteps[index].status = "completed"
+    }
+    importSteps.append(
+      AgentToolStep(
+        id: UUID(), name: "screenshot_import", label: label, status: "completed",
+        summary: summary))
+  }
+  private func finishImportSteps() {
+    if let index = importSteps.lastIndex(where: { $0.status == "running" }) {
+      importSteps[index].status = "completed"
+    }
+  }
+  private func failImportStep(_ summary: String) {
+    guard let index = importSteps.lastIndex(where: { $0.status == "running" }) else { return }
+    importSteps[index].status = "failed"
+    importSteps[index].summary = summary
+  }
+}
+
+private struct ScreenshotAttachmentMessage: View {
+  var body: some View {
+    HStack {
+      Spacer(minLength: 48)
+      Label("Portfolio screenshot", systemImage: "photo")
+        .font(.callout.weight(.medium))
+        .padding(.horizontal, 15).padding(.vertical, 11)
+        .background(Color.accentColor.opacity(0.14), in: .rect(cornerRadius: 18))
+    }
+    .accessibilityElement(children: .combine)
+    .accessibilityLabel("Portfolio screenshot attached")
   }
 }
 

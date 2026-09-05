@@ -46,6 +46,7 @@ export const assetTypeEnum = pgEnum("asset_type", [
   "etf",
   "cash",
   "perp",
+  "option",
   "other",
 ]);
 export const transactionTypeEnum = pgEnum("transaction_type", [
@@ -164,7 +165,7 @@ export const holdingObservations = pgTable("holding_observations", {
   accountId: uuid("account_id").notNull(),
   assetId: uuid("asset_id").notNull(),
   observedAt: timestamp("observed_at", { withTimezone: true }).notNull(),
-  quantity: numeric("quantity", { precision: 38, scale: 18 }).notNull(),
+  quantity: numeric("quantity", { precision: 38, scale: 18 }),
   unitPrice: numeric("unit_price", { precision: 38, scale: 18 }),
   marketValue: numeric("market_value", { precision: 38, scale: 18 }),
   currency: text("currency").notNull(),
@@ -281,6 +282,8 @@ export const fxQuotes = pgTable("fx_quotes", {
 export const importSessions = pgTable("import_sessions", {
   id: uuid("id").primaryKey().defaultRandom(),
   accountId: uuid("account_id"),
+  conversationId: uuid("conversation_id"),
+  requestId: uuid("request_id"),
   status: text("status").notNull(),
   summary: text("summary"),
   model: text("model"),
@@ -321,6 +324,8 @@ export const agentMessages = pgTable("agent_messages", {
   conversationId: uuid("conversation_id").notNull(),
   role: text("role").notNull(),
   content: text("content").notNull(),
+  kind: text("kind").notNull().default("text"),
+  metadata: jsonb("metadata").notNull().default({}),
   changeSetIds: jsonb("change_set_ids").notNull(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()

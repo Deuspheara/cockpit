@@ -93,7 +93,7 @@ export class AgentRuns {
           await sql`SELECT * FROM agent_conversations WHERE id=${id}`;
         if (!conversation) throw new NotFoundError("Conversation not found");
         const messages =
-          await sql`SELECT * FROM agent_messages WHERE conversation_id=${id} AND role!='tool' ORDER BY created_at,ordinal`;
+          await sql`SELECT *,metadata->>'importSessionId' AS import_session_id FROM agent_messages WHERE conversation_id=${id} AND role!='tool' ORDER BY created_at,ordinal`;
         const attempts =
           await sql`SELECT id,run_id,request_id,status FROM agent_attempts WHERE conversation_id=${id} ORDER BY created_at,id`;
         const events =
@@ -142,7 +142,7 @@ export class AgentRuns {
       if (active.length)
         throw new ConflictError("Wait for or stop the current response");
       const history =
-        await sql`SELECT role,content FROM (SELECT role,content,created_at,ordinal FROM agent_messages WHERE conversation_id=${conversationId} AND role!='tool' AND status='completed' ORDER BY created_at DESC,ordinal DESC LIMIT 12) m ORDER BY created_at,ordinal`;
+        await sql`SELECT role,content FROM (SELECT role,content,created_at,ordinal FROM agent_messages WHERE conversation_id=${conversationId} AND role!='tool' AND kind='text' AND status='completed' ORDER BY created_at DESC,ordinal DESC LIMIT 12) m ORDER BY created_at,ordinal`;
       const runId = randomUUID(),
         attemptId = randomUUID(),
         messageId = randomUUID();

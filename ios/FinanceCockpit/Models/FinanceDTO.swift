@@ -109,7 +109,7 @@ struct Position: Codable, Identifiable, Sendable {
   let symbol: String
   let name: String
   let assetType: String
-  let quantity: Amount
+  let quantity: Amount?
   let price: Amount?
   let marketValue: Amount?
   let currency: String

@@ -15,6 +15,7 @@ export class ReconciliationService {
     await this.database
       .sql`UPDATE reconciliation_items SET status='resolved',updated_at=now() WHERE account_id=${accountId} AND status='open' AND NOT EXISTS(SELECT 1 FROM holding_observations o WHERE o.account_id=${accountId} AND o.asset_id=reconciliation_items.asset_id)`;
     for (const o of observations) {
+      if (o.quantity === null) continue;
       const ledger = transactions.filter(
         (t) =>
           t.assetId === o.assetId &&

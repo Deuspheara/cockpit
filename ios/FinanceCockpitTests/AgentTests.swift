@@ -32,6 +32,20 @@ struct AgentParserTests {
   }
 }
 
+struct ConversationalImportDecodingTests {
+  @Test func restoresValueOnlyImportCardsWithQuoteProvenance() throws {
+    let candidate = "33333333-3333-4333-8333-333333333333"
+    let data = Data(
+      #"{"id":"11111111-1111-4111-8111-111111111111","status":"ready_for_review","revision":2,"summary":"1 position ready for review","extraction":{"likelyAccountName":"Broker screenshot","capturedAt":"2026-09-05T10:00:00Z","capturedAtInferred":true,"currency":"EUR","positions":[{"candidateId":"\#(candidate)","symbol":"IWDA","name":"Core MSCI World","isin":"IE00B4L5Y983","quantity":null,"currency":"EUR","marketValue":"1783.70","confidence":0.94,"providerKey":"IWDA.AS","providerExchange":"AS","matchStatus":"matched","quantitySource":"value_only","quotePrice":"101.25","quoteCurrency":"EUR","quoteAt":"2026-09-04T00:00:00Z","fxRate":"1","sourceLines":1,"sourceCandidateIds":["\#(candidate)"]}],"derivatives":[]},"blockers":[],"warnings":["Quantity unknown"],"changeSetId":null}"#.utf8)
+    let session = try APIClient.decoder().decode(ImportSessionDTO.self, from: data)
+    #expect(session.extraction?.positions.count == 1)
+    #expect(session.extraction?.positions[0].quantity == nil)
+    #expect(session.extraction?.positions[0].marketValue?.decimal == Decimal(string: "1783.70"))
+    #expect(session.extraction?.positions[0].sourceCandidateIds == [UUID(uuidString: candidate)!])
+    #expect(session.extraction?.capturedAtInferred == true)
+  }
+}
+
 @MainActor struct AgentReducerTests {
   private func event(
     _ id: Int, _ type: String, run: UUID, attempt: UUID, message: UUID? = nil, text: String? = nil,

@@ -1,4 +1,5 @@
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
+import { randomUUID } from "node:crypto";
 import { migrate } from "../src/db/migrate.js";
 import { connectDatabase } from "../src/db/index.js";
 import { readConfig } from "../src/config.js";
@@ -8,13 +9,12 @@ import { ImportService } from "../src/modules/imports/service.js";
 import { PortfolioService } from "../src/modules/portfolio/service.js";
 const url = process.env.TEST_DATABASE_URL;
 describe.skipIf(!url)(
-  "screenshot fixture → clarification → review → apply",
+  "persisted conversational screenshot → correction → review → apply → undo",
   () => {
     let db: ReturnType<typeof connectDatabase>,
       imports: ImportService,
       changes: ChangeSetService;
     let sessionId: string;
-    let calls = 0;
     beforeAll(async () => {
       if (!url || !new URL(url).pathname.endsWith("/finance_test"))
         throw new Error("Dedicated test DB required");
@@ -30,11 +30,10 @@ describe.skipIf(!url)(
           response_format: { type: string };
         };
         expect(request.response_format.type).toBe("json_schema");
-        calls++;
         const content = {
           likelyAccountName: "Broker screenshot",
           currency: "EUR",
-          capturedAt: calls === 1 ? null : "2026-08-31T00:00:00Z",
+          capturedAt: null,
           positions: [
             {
               symbol: "CW8",
@@ -66,35 +65,64 @@ describe.skipIf(!url)(
         transport,
       );
       imports = new ImportService(db, model, changes);
-      sessionId = (await imports.create()).id;
+      const [conversation] =
+        await db.sql`INSERT INTO agent_conversations DEFAULT VALUES RETURNING id`;
+      const requestId = randomUUID();
+      const created = await imports.create(
+        undefined,
+        String(conversation!.id),
+        requestId,
+      );
+      const replayed = await imports.create(
+        undefined,
+        String(conversation!.id),
+        requestId,
+      );
+      expect(replayed.id).toBe(created.id);
+      sessionId = created.id;
     });
     afterAll(async () => {
       await db.sql`TRUNCATE accounts,assets,import_sessions CASCADE`;
       await db.close();
     });
-    it("keeps images transient and blocks review while date is missing", async () => {
+    it("keeps images transient, persists one typed chat attachment, and infers the date", async () => {
       const session = await imports.extract(sessionId, {
         bytes: Buffer.from("fixture screenshot bytes"),
         mime: "image/png",
       });
-      expect(session.status).toBe("needs_input");
-      await expect(imports.prepare(sessionId)).rejects.toThrow(
-        "Resolve missing",
+      expect(session.status).toBe("ready_for_review");
+      expect(session.extraction?.capturedAtInferred).toBe(true);
+      expect(session.warnings).toContain(
+        "Observation date was inferred from the upload date.",
       );
       const rows =
         await db.sql`SELECT extraction FROM import_extractions WHERE import_session_id=${sessionId}`;
       expect(JSON.stringify(rows)).not.toContain(
         Buffer.from("fixture screenshot bytes").toString("base64"),
       );
+      const messages =
+        await db.sql`SELECT kind,metadata FROM agent_messages WHERE metadata->>'importSessionId'=${sessionId}`;
+      expect(messages).toHaveLength(1);
+      expect(messages[0]?.kind).toBe("screenshot_import");
       expect(await db.sql`SELECT id FROM accounts`).toHaveLength(0);
     });
-    it("uses an explicit follow-up answer then creates only observations after review", async () => {
-      const session = await imports.extract(
-        sessionId,
-        undefined,
-        "Observed on August 31, 2026.",
-      );
-      expect(session.status).toBe("ready_for_review");
+    it("uses revision-checked edits then creates only observations after inline review", async () => {
+      const original = await imports.get(sessionId);
+      const session = await imports.update(sessionId, original.revision, {
+        capturedAt: "2026-08-31T00:00:00Z",
+        positions: [
+          {
+            candidateId: original.extraction!.positions[0]!.candidateId!,
+            quantity: "18.23",
+          },
+        ],
+      });
+      expect(session.extraction?.capturedAtInferred).toBe(false);
+      await expect(
+        imports.update(sessionId, original.revision, {
+          likelyAccountName: "Stale correction",
+        }),
+      ).rejects.toThrow("changed");
       const draft = await imports.prepare(sessionId);
       expect(draft.operations.some((o) => o.table === "transactions")).toBe(
         false,

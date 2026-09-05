@@ -147,6 +147,30 @@ describe.skipIf(!url)("real PostgreSQL finance behavior", () => {
         ?.find((p) => p.assetId === assetId)?.quantity,
     ).toBe("18.230000000000000000");
   });
+  it("values an explicit market value when the screenshot quantity is unknown", async () => {
+    const valueOnlyAsset = (
+      await new AssetService(db).create({
+        symbol: "NVDA261218P00195000",
+        name: "NVDA put 195",
+        assetType: "option",
+        quoteCurrency: "USD",
+      })
+    ).id;
+    const draft = await changes.proposeObservation({
+      accountId,
+      assetId: valueOnlyAsset,
+      observedAt: "2026-08-31T00:00:00Z",
+      marketValue: "14.57",
+      currency: "USD",
+    });
+    await changes.apply(draft.id);
+    const position = (await portfolio.positions(accountId))
+      .get(accountId)
+      ?.find((item) => item.assetId === valueOnlyAsset);
+    expect(position?.quantity).toBeUndefined();
+    expect(position?.marketValue).toBe("14.570000000000000000");
+    await changes.apply(draft.id, true);
+  });
   it("versions a rule from June and previews historical posted events before voiding", async () => {
     const input = {
       accountId,

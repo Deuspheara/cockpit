@@ -55,7 +55,9 @@ struct AccountDetailView: View {
                 }
               }
               Text(
-                "\(position.side.map { $0.capitalized + " " } ?? "")\(FinanceFormat.quantity(position.quantity)) · \(position.source)"
+                position.quantity.map {
+                  "\(position.side.map { $0.capitalized + " " } ?? "")\(FinanceFormat.quantity($0)) · \(position.source)"
+                } ?? "Quantity unknown · \(position.source)"
               ).font(.subheadline).foregroundStyle(.secondary)
               if position.assetType == "perp" {
                 if detail.account.sourceType == "dydx" {

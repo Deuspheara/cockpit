@@ -7,7 +7,7 @@ struct PortfolioAssetLine: Decodable, Identifiable, Sendable {
   let assetId: UUID
   let symbol: String
   let name: String
-  let quantity: Amount
+  let quantity: Amount?
   let marketValue: Amount?
   let currency: String
   let source: String
@@ -69,7 +69,10 @@ struct PortfolioAssetRow: View {
       AssetLogo(symbol: line.symbol, urlString: line.logoUrl, loader: logoLoader)
       VStack(alignment: .leading, spacing: 4) {
         Text(line.symbol).font(.headline)
-        Text("\(line.accountName) · \(FinanceFormat.quantity(line.quantity)) units")
+        Text(
+          line.quantity.map { "\(line.accountName) · \(FinanceFormat.quantity($0)) units" }
+            ?? "\(line.accountName) · Quantity unknown"
+        )
           .font(.caption).foregroundStyle(.secondary)
         Text("\(line.source)\(line.stale ? " · Stale" : "")")
           .font(.caption).foregroundStyle(.secondary)

@@ -3,14 +3,18 @@ import multipart from "@fastify/multipart";
 import { z } from "zod";
 import type { Database } from "../../db/index.js";
 import type { Config } from "../../config.js";
+import type { Cache } from "../../shared/cache.js";
 import { OpenRouterClient } from "../agent/openrouter.js";
 import { ChangeSetService } from "../changes/service.js";
 import { ImportService } from "./service.js";
 import { validateImage } from "./images.js";
 import { AppError } from "../../shared/errors.js";
+import { EODHDMarketData } from "./market-data.js";
+import { currency, decimalString } from "../../shared/decimal.js";
 export async function registerImportRoutes(
   app: FastifyInstance,
   database: Database,
+  cache: Cache,
   config: Config,
   model = new OpenRouterClient(config),
 ) {
@@ -26,6 +30,7 @@ export async function registerImportRoutes(
     database,
     model,
     new ChangeSetService(database),
+    new EODHDMarketData(cache, config),
   );
   const id = (params: unknown) =>
     z.object({ id: z.uuid().toLowerCase() }).parse(params).id;
@@ -37,6 +42,16 @@ export async function registerImportRoutes(
         .parse(request.body ?? {}).accountId,
     ),
   );
+  app.post("/api/v1/agent/conversations/:id/imports", (request) => {
+    const body = z
+      .object({
+        requestId: z.uuid().toLowerCase(),
+        accountId: z.uuid().toLowerCase().optional(),
+      })
+      .strict()
+      .parse(request.body);
+    return imports.create(body.accountId, id(request.params), body.requestId);
+  });
   app.get("/api/v1/imports/:id", (request) => imports.get(id(request.params)));
   app.post(
     "/api/v1/imports/:id/screenshots",
@@ -78,6 +93,55 @@ export async function registerImportRoutes(
         .parse(request.body).message,
     ),
   );
+  const editableText = z.string().trim().max(1000).nullable();
+  const editableAmount = decimalString.nullable();
+  app.patch("/api/v1/imports/:id", (request) => {
+    const body = z
+      .object({
+        revision: z.number().int().nonnegative(),
+        likelyAccountName: editableText.optional(),
+        capturedAt: z.iso.datetime({ offset: true }).optional(),
+        positions: z
+          .array(
+            z
+              .object({
+                candidateId: z.uuid(),
+                symbol: editableText.optional(),
+                name: editableText.optional(),
+                isin: editableText.optional(),
+                quantity: editableAmount.optional(),
+                marketValue: editableAmount.optional(),
+                currency: currency.nullable().optional(),
+              })
+              .strict(),
+          )
+          .max(50)
+          .optional(),
+        derivatives: z
+          .array(
+            z
+              .object({
+                candidateId: z.uuid(),
+                underlyingSymbol: editableText.optional(),
+                name: editableText.optional(),
+                optionType: z.enum(["call", "put"]).nullable().optional(),
+                strike: editableAmount.optional(),
+                expiration: z.iso.date().nullable().optional(),
+                contractSymbol: editableText.optional(),
+                quantity: editableAmount.optional(),
+                marketValue: editableAmount.optional(),
+                currency: currency.nullable().optional(),
+              })
+              .strict(),
+          )
+          .max(50)
+          .optional(),
+      })
+      .strict()
+      .parse(request.body);
+    const { revision, ...patch } = body;
+    return imports.update(id(request.params), revision, patch);
+  });
   app.post("/api/v1/imports/:id/prepare-change-set", (request) =>
     imports.prepare(
       id(request.params),

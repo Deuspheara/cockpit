@@ -150,7 +150,7 @@ export async function createApp(
     };
   });
   await registerFinanceRoutes(app, database, cache, config);
-  await registerImportRoutes(app, database, config);
+  await registerImportRoutes(app, database, cache, config);
   const agentRuns = registerAgentRoutes(app, database, config);
   registerBotRoutes(app, database);
   app.addHook("preClose", () => agentRuns.close());

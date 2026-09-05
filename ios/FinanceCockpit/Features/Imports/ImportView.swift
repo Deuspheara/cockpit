@@ -5,19 +5,58 @@ import UIKit
 struct ImportSessionDTO: Decodable, Sendable {
   struct Extraction: Decodable, Sendable {
     struct Candidate: Decodable, Sendable {
+      let candidateId: UUID?
       let symbol: String?
+      let name: String?
+      let isin: String?
       let quantity: Amount?
       let currency: String?
       let marketValue: Amount?
+      let confidence: Double
+      let providerKey: String?
+      let providerExchange: String?
+      let matchStatus: String
+      let quantitySource: String
+      let quotePrice: Amount?
+      let quoteCurrency: String?
+      let quoteAt: Date?
+      let fxRate: Amount?
+      let sourceLines: Int
+      let sourceCandidateIds: [UUID]
+    }
+    struct Derivative: Decodable, Sendable {
+      let candidateId: UUID?
+      let underlyingSymbol: String?
+      let name: String?
+      let optionType: String?
+      let strike: Amount?
+      let expiration: String?
+      let contractSymbol: String?
+      let quantity: Amount?
+      let marketValue: Amount?
+      let currency: String?
+      let confidence: Double
+      let quantitySource: String
+      let sourceLines: Int
+      let sourceCandidateIds: [UUID]
     }
     let likelyAccountName: String?
+    let likelyInstitution: String?
+    let capturedAt: Date?
+    let capturedAtInferred: Bool
+    let currency: String?
     let positions: [Candidate]
+    let derivatives: [Derivative]
   }
   let id: UUID
   let status: String
+  let revision: Int
   let summary: String?
   let extraction: Extraction?
   let questions: [String]?
+  let blockers: [String]?
+  let warnings: [String]?
+  let changeSetId: UUID?
 }
 struct ImportView: View {
   var accountID: UUID?

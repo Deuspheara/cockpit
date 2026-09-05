@@ -40,7 +40,7 @@ export interface PositionView {
   symbol: string;
   name: string;
   assetType: string;
-  quantity: DecimalString;
+  quantity?: DecimalString;
   price?: DecimalString;
   marketValue?: DecimalString;
   currency: string;

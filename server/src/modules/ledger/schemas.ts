@@ -66,11 +66,18 @@ export const observationInput = z
     accountId: z.uuid().toLowerCase(),
     assetId: z.uuid().toLowerCase(),
     observedAt: z.iso.datetime({ offset: true }),
-    quantity: nonnegativeDecimal,
+    quantity: nonnegativeDecimal.nullable().optional(),
     unitPrice: nonnegativeDecimal.nullable().optional(),
     marketValue: nonnegativeDecimal.nullable().optional(),
     currency,
     costBasis: nonnegativeDecimal.nullable().optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((observation, ctx) => {
+    if (observation.quantity == null && observation.marketValue == null)
+      ctx.addIssue({
+        code: "custom",
+        message: "An observation needs a quantity or market value",
+      });
+  });
 export type ObservationInput = z.infer<typeof observationInput>;

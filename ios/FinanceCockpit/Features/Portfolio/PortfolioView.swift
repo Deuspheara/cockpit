@@ -7,11 +7,12 @@ struct PortfolioView: View {
   @State private var showAssets = false
   @State private var assetSnapshot = SnapshotLoader<[PortfolioAssetLine]>()
   @State private var assistantPresented = false
+  @State private var assistantStartsImport = false
   @State private var openedAccount: UUID?
   @State private var sheet: PortfolioSheet?
 
   enum PortfolioSheet: String, Identifiable {
-    case add, manual, screenshots
+    case add, manual
     var id: String { rawValue }
   }
 
@@ -63,6 +64,7 @@ struct PortfolioView: View {
       ToolbarItem(placement: .topBarTrailing) {
         HStack(spacing: 0) {
           Button {
+            assistantStartsImport = false
             assistantPresented = true
           } label: {
             AppIcon(name: .assistant, size: 21)
@@ -73,7 +75,10 @@ struct PortfolioView: View {
           .accessibilityHint("Opens the finance assistant")
           .accessibilityIdentifier("portfolio-assistant")
           Menu {
-            Button("Import screenshot") { sheet = .screenshots }
+            Button("Import screenshot") {
+              assistantStartsImport = true
+              assistantPresented = true
+            }
             Button("Add account") { sheet = .add }
             Button("Add manually") { sheet = .manual }
           } label: {
@@ -99,7 +104,7 @@ struct PortfolioView: View {
     }
     .refreshable { await load() }
     .fullScreenCover(isPresented: $assistantPresented) {
-      NavigationStack { AgentView() }
+      NavigationStack { AgentView(startImport: assistantStartsImport) }
     }
     .sheet(item: $sheet) { item in
       switch item {
@@ -109,7 +114,6 @@ struct PortfolioView: View {
           openedAccount = account.id
         }
       case .manual: NavigationStack { ManualEntryView(initialMode: .asset) }
-      case .screenshots: NavigationStack { ImportView() }
       }
     }
   }

@@ -3,7 +3,15 @@ import type { Database } from "../../db/index.js";
 import { currency } from "../../shared/decimal.js";
 export const assetInput = z
   .object({
-    assetType: z.enum(["crypto", "equity", "etf", "cash", "perp", "other"]),
+    assetType: z.enum([
+      "crypto",
+      "equity",
+      "etf",
+      "cash",
+      "perp",
+      "option",
+      "other",
+    ]),
     symbol: z.string().trim().min(1).max(32),
     name: z.string().trim().min(1).max(150),
     quoteCurrency: currency,

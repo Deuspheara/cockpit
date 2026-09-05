@@ -31,30 +31,28 @@ struct AgentMarkdown: View {
 struct AgentToolActivity: View {
   let steps: [AgentToolStep]
   var body: some View {
-    DisclosureGroup {
-      VStack(alignment: .leading, spacing: 12) {
-        ForEach(steps) { step in
-          HStack(alignment: .top, spacing: 9) {
-            if step.status == "running" {
+    VStack(alignment: .leading, spacing: 10) {
+      ForEach(steps) { step in
+        HStack(alignment: .top, spacing: 9) {
+          ZStack {
+            if step.status == "running" || step.status == "pending" {
               ProgressView().controlSize(.small)
             } else {
               Image(systemName: icon(step.status)).foregroundStyle(
                 step.status == "failed" ? Color.red : Color.secondary)
             }
-            VStack(alignment: .leading, spacing: 3) {
-              Text(step.label).font(.callout)
-              if let summary = step.summary {
-                Text(summary).font(.caption).foregroundStyle(.secondary)
-              }
+          }
+          .frame(width: 18, height: 18)
+          VStack(alignment: .leading, spacing: 3) {
+            Text(step.label).font(.callout)
+            if let summary = step.summary {
+              Text(summary).font(.caption).foregroundStyle(.secondary)
             }
           }
-          .accessibilityElement(children: .combine)
-          .accessibilityLabel("\(step.label), \(step.status). \(step.summary ?? "")")
         }
-      }.padding(.top, 8)
-    } label: {
-      Text(steps.last(where: { $0.status == "running" })?.label ?? "\(steps.count) activity steps")
-        .font(.callout).foregroundStyle(.secondary)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(step.label), \(step.status). \(step.summary ?? "")")
+      }
     }
     .padding(12)
     .background(Color.primary.opacity(0.04), in: .rect(cornerRadius: 14))

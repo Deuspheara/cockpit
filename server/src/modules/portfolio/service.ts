@@ -2,7 +2,7 @@ import { sampleChart } from "./sampling.js";
 import { providerHistory } from "./history.js";
 import { visibleAccounts } from "../accounts/visibility.js";
 import type { Sql, TransactionSql } from "postgres";
-import { Decimal, money } from "../../shared/decimal.js";
+import { Decimal, money, type DecimalString } from "../../shared/decimal.js";
 import { ledgerQuantity, ledgerCost, type PositionView } from "./projection.js";
 import type { Account } from "../accounts/schemas.js";
 import type { Asset } from "../assets/service.js";
@@ -25,7 +25,7 @@ interface Observation {
   accountId: string;
   assetId: string;
   observedAt: Date;
-  quantity: string;
+  quantity: string | null;
   unitPrice: string | null;
   marketValue: string | null;
   currency: string;
@@ -77,9 +77,11 @@ export class PortfolioService {
         );
         const useLedger = a.sourceType === "manual" && ledger.length > 0;
         if (!useLedger && !observed) continue;
-        let quantity = useLedger
+        let quantity: DecimalString | undefined = useLedger
           ? ledgerQuantity(ledger)
-          : money(observed!.quantity);
+          : observed!.quantity === null
+            ? undefined
+            : money(observed!.quantity);
         // Cash ledger quantities also include trade settlement, when an explicit cash line exists.
         if (useLedger && asset.assetType === "cash") {
           const trades = transactions.filter(
@@ -89,7 +91,7 @@ export class PortfolioService {
               t.currency === asset.quoteCurrency &&
               ["BUY", "SELL"].includes(t.type),
           );
-          let cash = new Decimal(quantity);
+          let cash = new Decimal(quantity!);
           let incomplete = false;
           for (const trade of trades) {
             const gross =
@@ -121,7 +123,7 @@ export class PortfolioService {
           }
           quantity = money(cash);
         }
-        if (new Decimal(quantity).isZero()) continue;
+        if (quantity !== undefined && new Decimal(quantity).isZero()) continue;
         const quote = quotes.find((q) => q.assetId === asset.id);
         let price =
           asset.assetType === "cash"
@@ -139,7 +141,7 @@ export class PortfolioService {
         let marketValue =
           !useLedger && observed?.marketValue != null
             ? money(observed.marketValue)
-            : price
+            : price && quantity !== undefined
               ? money(new Decimal(quantity).mul(price))
               : undefined;
         if (!useLedger && observed?.marketValue != null)

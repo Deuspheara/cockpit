@@ -8,6 +8,8 @@ struct AgentMessage: Codable, Identifiable, Sendable {
   var changeSetIds: [UUID]
   var attemptId: UUID? = nil
   var status: String? = nil
+  var kind: String? = nil
+  var importSessionId: UUID? = nil
 }
 struct AgentAttempt: Codable, Identifiable, Sendable {
   let id: UUID
@@ -144,6 +146,25 @@ final class AgentModel {
     if let data = UserDefaults.standard.data(forKey: key + "-pending") {
       pending = try? JSONDecoder().decode(Pending.self, from: data)
     }
+  }
+  func ensureConversation() async throws -> UUID {
+    if let conversationID { return conversationID }
+    guard let api else { throw APIError(message: "Assistant is not connected.") }
+    let request = UUID()
+    let conversation: AgentConversation = try await api.send(
+      "agent/conversations", method: "POST",
+      body: ["requestId": .string(request.uuidString)])
+    conversationID = conversation.id
+    UserDefaults.standard.set(conversation.id.uuidString, forKey: key)
+    return conversation.id
+  }
+  func createImport(accountID: UUID? = nil) async throws -> ImportSessionDTO {
+    guard let api else { throw APIError(message: "Assistant is not connected.") }
+    let conversation = try await ensureConversation()
+    var body: [String: JSONValue] = ["requestId": .string(UUID().uuidString)]
+    if let accountID { body["accountId"] = .string(accountID.uuidString) }
+    return try await api.send(
+      "agent/conversations/\(conversation)/imports", method: "POST", body: body)
   }
   private func savePending() {
     if let pending {
