@@ -33,7 +33,7 @@ Prerequisites: Docker with Compose 2.24.4+, Xcode with an iOS 26+ simulator, and
 3. Run `make up`. Caddy obtains TLS certificates. PostgreSQL, Redis and the API have no public host ports; Caddy is the entry point. Migrations must succeed before API/worker startup.
 4. Check `https://YOUR_DOMAIN/health`, create a device token and pair the iPhone using the HTTPS origin.
 
-For updates: back up, pull the code, run `make up`, inspect service health and diagnostics. Do not downgrade across incompatible migrations without restoring the matching database. An actual VPS/domain was not supplied; deployment was verified locally through the same Compose services.
+For updates, follow the exact rebuild, migration, Caddy reload, and streaming checks in [Streaming assistant deployment](docs/chat-streaming.md#vps-rebuild-using-the-existing-tunnel). Do not downgrade across incompatible migrations without restoring the matching database. An actual VPS/domain was not supplied; deployment was verified locally through the same Compose services.
 
 ## Device tokens
 
@@ -58,6 +58,8 @@ The first successful connection records an initial valuation immediately. Later 
 Set `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_PRIMARY` and `OPENROUTER_MODEL_VISION` in the server `.env`; run `make up`. Choose a primary model supporting function tools and a vision model supporting images plus strict JSON-schema output. Keys never go to the app. Settings reports configuration and model IDs.
 
 Portfolio's assistant button immediately left of + opens full-screen chat; Add → Import screenshot opens the same import flow available from chat. Screenshots accept PNG/JPEG, up to five per session and 12 MB each. Provide missing dates/currencies/quantities explicitly, then inspect the change review. Sending a screenshot or a chat message transmits its relevant financial context to OpenRouter and the configured model provider. Original images are not stored by this application; upstream retention depends on your provider configuration.
+
+Chat streams text and actual tool activity, preserves interrupted replies and drafts, and supports explicit Stop and retry. Backgrounded/disconnected clients recover server progress without rerunning tools. See [the streaming protocol and operational guide](docs/chat-streaming.md).
 
 ## Asset logos
 

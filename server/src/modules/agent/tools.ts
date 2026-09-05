@@ -84,6 +84,15 @@ export class AgentTools {
       },
     }));
   }
+  validate(name: string, input: unknown): unknown {
+    if (!Object.hasOwn(this.schemas, name))
+      throw new AppError(
+        "TOOL_FORBIDDEN",
+        "This tool is not available to the finance assistant",
+        403,
+      );
+    return this.schemas[name as keyof typeof this.schemas].parse(input);
+  }
   async execute(name: string, input: unknown): Promise<unknown> {
     // Exhaustive dispatch is the authorization boundary; never invoke arbitrary object properties by model name.
     switch (name) {

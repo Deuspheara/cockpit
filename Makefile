@@ -21,3 +21,5 @@ backup:
 	sh deploy/backup.sh
 ios-generate:
 	cd ios && xcodegen generate
+	mkdir -p ios/FinanceCockpit.xcodeproj/project.xcworkspace/xcshareddata/swiftpm
+	cp ios/Package.resolved ios/FinanceCockpit.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved

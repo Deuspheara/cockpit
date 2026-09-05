@@ -1,28 +1,16 @@
 import SwiftUI
 import UIKit
 
-struct AgentMessage: Codable, Identifiable, Sendable {
-  let id: UUID
-  let role: String
-  let content: String
-  let changeSetIds: [UUID]
-}
-
-struct AgentConversation: Decodable, Sendable {
-  let id: UUID
-  let messages: [AgentMessage]?
-}
-
 struct AgentView: View {
   @MotionPreference private var reduceMotion
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
   @FocusState private var composerFocused: Bool
-  @State private var conversationID: UUID?
-  @State private var messages: [AgentMessage] = []
+  @Environment(\.scenePhase) private var scenePhase
+  @State private var model = AgentModel()
+  @State private var nearBottom = true
+  @State private var userScrolling = false
   @State private var text = ""
-  @State private var error: String?
-  @State private var working = false
   @State private var importPresented = false
   @State private var restored = false
 
@@ -33,9 +21,14 @@ struct AgentView: View {
   ]
 
   init(messages: [AgentMessage] = [], working: Bool = false) {
-    _messages = State(initialValue: messages)
-    _working = State(initialValue: working)
+    let model = AgentModel()
+    model.messages = messages
+    model.phase = working ? "thinking" : "idle"
+    _model = State(initialValue: model)
   }
+
+  private var messages: [AgentMessage] { model.messages }
+  private var working: Bool { model.working || model.activeAttempt != nil }
 
   var body: some View {
     Group {
@@ -52,6 +45,14 @@ struct AgentView: View {
           .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
+    .onChange(of: scenePhase) { _, phase in
+      if phase == .active {
+        Task { await restore() }
+      } else if phase == .background {
+        model.detach()
+      }
+    }
+    .onDisappear { model.detach() }
     .navigationTitle("Assistant")
     .navigationBarTitleDisplayMode(.inline)
     .toolbar {
@@ -62,7 +63,7 @@ struct AgentView: View {
       if environment.sessionInfo?.ai.chatConfigured == true {
         ToolbarItem(placement: .topBarTrailing) {
           Button("New conversation") { resetConversation() }
-            .disabled(messages.isEmpty && conversationID == nil)
+            .disabled(working || messages.isEmpty && model.conversationID == nil)
         }
       }
     }
@@ -79,25 +80,38 @@ struct AgentView: View {
   private var conversation: some View {
     ScrollViewReader { scroll in
       ScrollView {
-        LazyVStack(alignment: .leading, spacing: 22) {
+        VStack(alignment: .leading, spacing: 22) {
           if messages.isEmpty {
             assistantWelcome
           }
           ForEach(messages.filter { $0.role != "tool" }) { message in
-            AgentMessageView(message: message)
-              .id(message.id)
+            AgentMessageView(
+              message: message, steps: message.attemptId.flatMap { model.steps[$0] } ?? []
+            )
+            .id(message.id)
           }
           if working {
             HStack(spacing: 9) {
               ProgressView().controlSize(.small)
-              Text("Checking your records…")
+              Text(
+                model.phase == "sending"
+                  ? "Sending…"
+                  : model.phase == "reconnecting"
+                    ? "Reconnecting…"
+                    : model.phase == "stopping"
+                      ? "Stopping…" : model.phase == "streaming" ? "Responding…" : "Thinking…")
             }
             .font(.callout)
             .foregroundStyle(.secondary)
           }
-          if let error {
+          if let error = model.error {
             Text(error).font(.callout).foregroundStyle(.red)
           }
+          if model.canRetry { Button("Retry response") { model.retry() } }
+          if model.phase == "disconnected" || model.phase == "failed" {
+            Button("Reconnect") { Task { await model.restore() } }
+          }
+          Color.clear.frame(height: 1).id("chat-bottom")
         }
         .frame(maxWidth: 720)
         .padding(.horizontal, 20)
@@ -106,9 +120,33 @@ struct AgentView: View {
         .frame(maxWidth: .infinity)
       }
       .scrollDismissesKeyboard(.interactively)
+      .onScrollGeometryChange(for: Bool.self) { geometry in
+        geometry.contentSize.height - geometry.visibleRect.maxY < 100
+      } action: { _, value in
+        if userScrolling || value { nearBottom = value }
+      }
+      .onScrollPhaseChange { _, phase in
+        userScrolling = phase == .interacting || phase == .decelerating
+      }
+      .onChange(of: model.revision) {
+        if nearBottom { scroll.scrollTo("chat-bottom", anchor: .bottom) }
+      }
       .onChange(of: messages.count) {
-        if let last = messages.last {
-          withAnimation(AppMotion.selection(reduceMotion)) { scroll.scrollTo(last.id, anchor: .bottom) }
+        if nearBottom {
+          withAnimation(AppMotion.selection(reduceMotion)) {
+            scroll.scrollTo("chat-bottom", anchor: .bottom)
+          }
+        }
+      }
+      .overlay(alignment: .bottomTrailing) {
+        if !nearBottom {
+          Button("Jump to latest", systemImage: "arrow.down") {
+            nearBottom = true
+            withAnimation(AppMotion.selection(reduceMotion)) {
+              scroll.scrollTo("chat-bottom", anchor: .bottom)
+            }
+          }
+          .buttonStyle(.borderedProminent).padding()
         }
       }
       .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -174,17 +212,22 @@ struct AgentView: View {
           .onSubmit { Task { await send() } }
 
         Button {
-          Task { await send() }
+          if working { Task { await model.stop() } } else { Task { await send() } }
         } label: {
-          AppIcon(name: .send, size: 20)
+          Image(systemName: working ? "stop.fill" : "arrow.up")
+            .font(.system(size: 20, weight: .semibold))
             .foregroundStyle(.white)
             .frame(width: 42, height: 42)
             .background(Color.accentColor, in: Circle())
         }
-        .accessibilityLabel("Send")
-        .disabled(working || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .accessibilityLabel(working ? "Stop response" : "Send")
+        .disabled(
+          working
+            ? model.phase == "stopping"
+            : (!model.canSend || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        )
         .opacity(
-          working || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
+          !working && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 0.45 : 1)
       }
       .padding(6)
       .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 25))
@@ -195,61 +238,31 @@ struct AgentView: View {
   }
 
   private func restore() async {
-    guard !restored, let api = environment.api else { return }
+    guard let api = environment.api else { return }
     restored = true
-    let key = conversationKey
-    guard let saved = UserDefaults.standard.string(forKey: key), let id = UUID(uuidString: saved)
-    else { return }
-    do {
-      let conversation: AgentConversation = try await api.send("agent/conversations/\(id)")
-      conversationID = id
-      messages = conversation.messages ?? []
-    } catch {
-      UserDefaults.standard.removeObject(forKey: key)
-    }
+    model.configure(api: api, server: environment.serverURL)
+    await model.restore()
   }
-
   private func resetConversation() {
-    UserDefaults.standard.removeObject(forKey: conversationKey)
-    conversationID = nil
-    messages = []
-    error = nil
+    model.reset()
     text = ""
     composerFocused = true
   }
-
-  private var conversationKey: String {
-    "agentConversation-" + environment.serverURL
-  }
-
   private func send() async {
-    guard let api = environment.api else { return }
     let input = text.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !input.isEmpty, !working else { return }
-    working = true
-    error = nil
-    text = ""
-    messages.append(AgentMessage(id: UUID(), role: "user", content: input, changeSetIds: []))
-    defer { working = false }
-    do {
-      if conversationID == nil {
-        let conversation: AgentConversation = try await api.send(
-          "agent/conversations", method: "POST")
-        conversationID = conversation.id
-        UserDefaults.standard.set(conversation.id.uuidString, forKey: conversationKey)
-      }
-      guard let id = conversationID else { return }
-      let response: AgentMessage = try await api.send(
-        "agent/conversations/\(id)/messages", method: "POST", body: ["text": .string(input)])
-      messages.append(response)
-    } catch {
-      self.error = error.localizedDescription
+    guard !input.isEmpty, model.canSend else { return }
+    guard input.utf16.count <= 4000 else {
+      model.error = "Please keep your message under 4,000 characters."
+      return
     }
+    text = ""
+    model.send(input)
   }
 }
 
 private struct AgentMessageView: View {
   let message: AgentMessage
+  let steps: [AgentToolStep]
 
   var body: some View {
     if message.role == "user" {
@@ -263,9 +276,15 @@ private struct AgentMessageView: View {
       }
     } else {
       VStack(alignment: .leading, spacing: 12) {
-        Text(message.content)
-          .textSelection(.enabled)
-          .frame(maxWidth: .infinity, alignment: .leading)
+        if !steps.isEmpty { AgentToolActivity(steps: steps) }
+        if !message.content.isEmpty { AgentMarkdown(content: message.content) }
+        if let status = message.status, status == "interrupted" || status == "failed" {
+          Label(
+            status == "interrupted" ? "Response interrupted" : "Response failed",
+            systemImage: "exclamationmark.circle"
+          )
+          .font(.caption).foregroundStyle(.secondary)
+        }
         ForEach(message.changeSetIds, id: \.self) { id in
           NavigationLink {
             ChangeSetReview(changeSetID: id)

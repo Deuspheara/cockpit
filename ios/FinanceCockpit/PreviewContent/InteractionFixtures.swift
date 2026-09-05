@@ -7,8 +7,15 @@
       request.url?.host == "fixtures.invalid"
     }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    private var loadingTask: Task<Void, Never>?
     override func startLoading() {
-      Task { @MainActor in
+      loadingTask = Task { @MainActor in
+        if request.url?.path.contains("/agent/") == true
+          || request.url?.path.hasSuffix("/session") == true
+        {
+          await AgentFixtureStore.shared.respond(to: request, transport: self)
+          return
+        }
         if request.url?.path.contains("dashboard") == true {
           try? await Task.sleep(for: .milliseconds(600))
         }
@@ -23,7 +30,7 @@
         } catch { client?.urlProtocol(self, didFailWithError: error) }
       }
     }
-    override func stopLoading() {}
+    override func stopLoading() { loadingTask?.cancel() }
   }
 
   @MainActor private final class InteractionFixtureStore {

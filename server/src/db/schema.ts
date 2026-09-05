@@ -1,5 +1,6 @@
 import {
   pgTable,
+  bigint,
   uuid,
   text,
   timestamp,
@@ -302,6 +303,7 @@ export const importExtractions = pgTable("import_extractions", {
     .defaultNow(),
 });
 export const agentConversations = pgTable("agent_conversations", {
+  requestId: uuid("request_id"),
   id: uuid("id").primaryKey().defaultRandom(),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
@@ -311,6 +313,10 @@ export const agentConversations = pgTable("agent_conversations", {
     .defaultNow(),
 });
 export const agentMessages = pgTable("agent_messages", {
+  runId: uuid("run_id"),
+  attemptId: uuid("attempt_id"),
+  status: text("status").notNull().default("completed"),
+  ordinal: bigint("ordinal", { mode: "bigint" }),
   id: uuid("id").primaryKey().defaultRandom(),
   conversationId: uuid("conversation_id").notNull(),
   role: text("role").notNull(),
@@ -382,4 +388,44 @@ export const providerAccountHistory = pgTable("provider_account_history", {
   retrievedAt: timestamp("retrieved_at", { withTimezone: true })
     .defaultNow()
     .notNull(),
+});
+
+// Durable agent execution is authoritative in PostgreSQL; see migration 0007 for constraints.
+export const agentRuns = pgTable("agent_runs", {
+  id: uuid("id").primaryKey(),
+  conversationId: uuid("conversation_id").notNull(),
+  requestId: uuid("request_id").notNull(),
+  text: text("text").notNull(),
+  context: jsonb("context").notNull(),
+  pending: jsonb("pending").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const agentAttempts = pgTable("agent_attempts", {
+  id: uuid("id").primaryKey(),
+  runId: uuid("run_id").notNull(),
+  conversationId: uuid("conversation_id").notNull(),
+  requestId: uuid("request_id").notNull(),
+  status: text("status").notNull(),
+  cancelRequested: boolean("cancel_requested").notNull(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const agentEvents = pgTable("agent_events", {
+  id: bigint("id", { mode: "bigint" }).primaryKey(),
+  attemptId: uuid("attempt_id").notNull(),
+  type: text("type").notNull(),
+  payload: jsonb("payload").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const agentToolResults = pgTable("agent_tool_results", {
+  runId: uuid("run_id").notNull(),
+  key: text("key").notNull(),
+  result: jsonb("result").notNull(),
+  proposalId: uuid("proposal_id"),
 });

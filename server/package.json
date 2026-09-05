@@ -18,7 +18,8 @@
     "token:create": "tsx src/modules/auth/cli.ts create",
     "token:revoke": "tsx src/modules/auth/cli.ts revoke",
     "format": "prettier --write src test",
-    "format:check": "prettier --check src test"
+    "format:check": "prettier --check src test",
+    "ai:smoke": "tsx src/modules/agent/smoke.ts"
   },
   "dependencies": {
     "@fastify/helmet": "^13.0.2",

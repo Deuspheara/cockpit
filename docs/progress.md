@@ -41,3 +41,9 @@ After connecting a real dYdX account, screenshots exposed empty Global/Crypto ch
 Added dYdX reported daily/hourly equity and cumulative trading-PnL history, dated ECB conversion, market candle charts, effective leverage/exposure/free-collateral details, and entry/valuation prices. Equity, PnL and market prices remain distinct views. Period-sensitive UTC buckets remove the dense recent cluster; each bucket retains its last real observation and original source timestamp. Smooth lines use monotone interpolation. Added 3W. The 1W live query was verified to use six-hour buckets after hourly pagination. Fixed account-row hit targets and uppercase iOS UUID normalization that previously hid positions. Native UI tests pass through equity → PnL → leverage → market prices, with screenshots visually reviewed.
 
 Final analytics validation: **51 backend tests across 13 files, 6 Swift tests and 2 native UI tests passed**. TypeScript checking passed. Private live-account screenshots and runtime credentials are excluded from version control.
+
+### Streaming assistant (2026-09-05)
+
+Implemented durable authenticated chat SSE, observable tool activity, safe OpenRouter errors and public capability diagnostics, explicit cancellation, checkpointed retries, and native Textual Markdown. Local removal of temperature/parallel_tool_calls was preserved. Proposal creation and tool checkpoints share a transaction; applying financial changes remains an explicit review action. Disconnected clients leave bounded server work running and restore it by cursor.
+
+Validation, reproducible commands, exact VPS rebuild steps, protocol details, screenshots, and outstanding live-environment checks are recorded in [chat-streaming.md](chat-streaming.md). No push or deployment was performed during validation.
