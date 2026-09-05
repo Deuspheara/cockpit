@@ -292,6 +292,7 @@ export class OpenRouterClient {
           `https://openrouter.ai/api/v1/models/${model.split("/").map(encodeURIComponent).join("/")}/endpoints`,
           { signal: AbortSignal.timeout(10000), redirect: "error" },
         );
+        if (!response.ok) throw new Error("Capability lookup failed");
         const data = (await response.json()).data;
         const required = vision
           ? ["max_tokens", "response_format", "structured_outputs"]

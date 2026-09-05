@@ -52,6 +52,23 @@ docker compose exec api node dist/modules/agent/smoke.js
 
 The command verifies tool output plus a synthetic image against the actual strict import schema, printing only validation status and sanitized errors. It uses the deployment's configured models/key and makes up to two bounded paid model calls. Public capabilities are not proof that a particular account can route.
 
+If chat passes but vision fails, use the explicit diagnostic mode:
+
+```sh
+docker compose exec api node dist/modules/agent/smoke.js --diagnose
+```
+
+This makes up to five bounded synthetic calls (60 seconds each): chat/tools, the full image/import-schema request, image-only, minimal text/schema, and minimal image/schema. All use the configured models and `require_parameters: true`. The diagnostic probes do not replace or relax production extraction. The command exits unsuccessfully if any check fails; only fixed status fields and safe errors (including the upstream HTTP status) are printed.
+
+- If image-only passes but minimal text/schema fails routing, inspect account access to providers supporting structured outputs. Public model metadata does not reflect account restrictions.
+- If both individual capabilities pass but their combination fails, an eligible endpoint must support both capabilities together.
+- If all minimal probes pass but the full import request fails, investigate the full schema/request compatibility. Do not assume a simpler schema makes production imports work.
+- If image-only also fails, inspect access to image-capable endpoints before blaming the import schema.
+
+The original smoke PNG had an invalid IDAT checksum. It is replaced with a validated 32×32 white RGB PNG. That fixture defect alone does not establish the cause of a router-level parameter rejection. The smoke check also rejects missing required extraction fields and fabricated financial lines, rather than allowing Zod defaults to make an empty object appear successful.
+
+Follow-up validation: Node 24 Docker build, typecheck, formatting, and all 100 tests passed, including PNG checksums/decompression, isolated diagnostic requests, safe error reporting, and strict smoke-output checks. The VPS account-specific vision failure still needs the live diagnostic result.
+
 ## VPS rebuild using the existing tunnel
 
 From the project checkout containing the updated files and private `.env`:

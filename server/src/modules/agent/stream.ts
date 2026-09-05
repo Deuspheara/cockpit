@@ -124,6 +124,7 @@ export function aiError(
     status === 429 ? 429 : status === 408 || status === 504 ? 504 : 502,
     {
       retryable,
+      upstreamStatus: status,
       ...(Number.isFinite(seconds)
         ? { retryAfterSeconds: Math.max(1, Math.min(300, seconds)) }
         : {}),
