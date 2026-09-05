@@ -1,0 +1,95 @@
+import type { FastifyInstance } from "fastify";
+import multipart from "@fastify/multipart";
+import { z } from "zod";
+import type { Database } from "../../db/index.js";
+import type { Config } from "../../config.js";
+import { OpenRouterClient } from "../agent/openrouter.js";
+import { ChangeSetService } from "../changes/service.js";
+import { ImportService } from "./service.js";
+import { validateImage } from "./images.js";
+import { AppError } from "../../shared/errors.js";
+export async function registerImportRoutes(
+  app: FastifyInstance,
+  database: Database,
+  config: Config,
+  model = new OpenRouterClient(config),
+) {
+  await app.register(multipart, {
+    limits: {
+      fileSize: config.MAX_UPLOAD_MB * 1024 * 1024,
+      files: 5,
+      fields: 2,
+      parts: 7,
+    },
+  });
+  const imports = new ImportService(
+    database,
+    model,
+    new ChangeSetService(database),
+  );
+  const id = (params: unknown) =>
+    z.object({ id: z.uuid().toLowerCase() }).parse(params).id;
+  app.post("/api/v1/imports", (request) =>
+    imports.create(
+      z
+        .object({ accountId: z.uuid().toLowerCase().optional() })
+        .strict()
+        .parse(request.body ?? {}).accountId,
+    ),
+  );
+  app.get("/api/v1/imports/:id", (request) => imports.get(id(request.params)));
+  app.post(
+    "/api/v1/imports/:id/screenshots",
+    { bodyLimit: config.MAX_UPLOAD_MB * 1024 * 1024 * 5 },
+    async (request) => {
+      const sessionId = id(request.params);
+      let files = 0;
+      for await (const part of request.parts()) {
+        if (part.type !== "file")
+          throw new AppError(
+            "INVALID_IMAGE",
+            "Only screenshot files are accepted",
+          );
+        const bytes = await part.toBuffer();
+        try {
+          validateImage(
+            bytes,
+            part.mimetype,
+            config.MAX_UPLOAD_MB * 1024 * 1024,
+          );
+          await imports.extract(sessionId, { bytes, mime: part.mimetype });
+          files++;
+        } finally {
+          bytes.fill(0);
+        }
+      }
+      if (!files)
+        throw new AppError("INVALID_IMAGE", "Choose at least one screenshot");
+      return imports.get(sessionId);
+    },
+  );
+  app.post("/api/v1/imports/:id/message", (request) =>
+    imports.extract(
+      id(request.params),
+      undefined,
+      z
+        .object({ message: z.string().trim().min(1).max(4000) })
+        .strict()
+        .parse(request.body).message,
+    ),
+  );
+  app.post("/api/v1/imports/:id/prepare-change-set", (request) =>
+    imports.prepare(
+      id(request.params),
+      z
+        .object({
+          accountName: z.string().trim().min(1).max(120).optional(),
+          assetMappings: z
+            .record(z.string(), z.uuid().toLowerCase())
+            .optional(),
+        })
+        .strict()
+        .parse(request.body ?? {}),
+    ),
+  );
+}

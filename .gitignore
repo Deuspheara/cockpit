@@ -1,0 +1,28 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+coverage/
+.DS_Store
+backups/
+.build/
+DerivedData/
+*.xcodeproj/
+xcuserdata/
+
+# Private runtime data and visual evidence
+docs/screenshots/
+*.xcresult/
+*.log
+*.dump
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# Local signing credentials
+*.p12
+*.p8
+*.mobileprovision
+*.key

@@ -1,0 +1,62 @@
+name: finance-cockpit
+services:
+  postgres:
+    image: postgres:18.3-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes: [postgres_data:/var/lib/postgresql]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+  redis:
+    image: redis:8.2.4-alpine
+    command: [redis-server, --save, '', --appendonly, 'no']
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+  migrate:
+    build: ./server
+    env_file: .env
+    command: [node, dist/db/migrate.js]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: 'no'
+  api:
+    build: ./server
+    env_file: .env
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:3000/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 15s
+      retries: 5
+    restart: unless-stopped
+  worker:
+    build: ./server
+    env_file: .env
+    command: [node, dist/worker.js]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+    restart: unless-stopped
+  caddy:
+    image: caddy:2.10.2-alpine
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN}
+    ports: ['80:80', '443:443', '443:443/udp']
+    volumes: ['./deploy/Caddyfile:/etc/caddy/Caddyfile:ro', caddy_data:/data, caddy_config:/config]
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+volumes:
+  postgres_data:
+  redis_data:
+  caddy_data:
+  caddy_config:

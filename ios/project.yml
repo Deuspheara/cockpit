@@ -1,0 +1,48 @@
+name: FinanceCockpit
+options:
+  bundleIdPrefix: com.personal
+  deploymentTarget:
+    iOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
+    GENERATE_INFOPLIST_FILE: YES
+    DEVELOPMENT_TEAM: ""
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: 1
+    TARGETED_DEVICE_FAMILY: "1,2"
+    INFOPLIST_KEY_UILaunchScreen_Generation: YES
+    INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+    INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to your private development finance server.
+targets:
+  FinanceCockpit:
+    type: application
+    platform: iOS
+    sources: [FinanceCockpit]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.personal.FinanceCockpit
+      configs:
+        Debug:
+          INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
+  FinanceCockpitTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources: [FinanceCockpitTests]
+    dependencies:
+      - target: FinanceCockpit
+  FinanceCockpitUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources: [FinanceCockpitUITests]
+    dependencies:
+      - target: FinanceCockpit
+schemes:
+  FinanceCockpit:
+    build:
+      targets:
+        FinanceCockpit: all
+    test:
+      targets: [FinanceCockpitTests, FinanceCockpitUITests]
