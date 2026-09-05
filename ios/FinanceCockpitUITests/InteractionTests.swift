@@ -239,3 +239,37 @@ import XCTest
     XCTAssertTrue(app.buttons["portfolio-assistant"].waitForExistence(timeout: 5))
   }
 }
+
+
+@MainActor final class WalletLayoutTests: XCTestCase {
+  func testPartialWalletKeepsPositionsVisibleAndDetailsExpandable() {
+    checkLayout(largeText: false)
+  }
+  func testPartialWalletWithAccessibilityText() {
+    checkLayout(largeText: true)
+  }
+  private func checkLayout(largeText: Bool) {
+    let app = XCUIApplication()
+    app.launchArguments = ["--ui-fixtures", "--wallet-layout", "--dark"] + (largeText ? ["--large-text"] : [])
+    app.launch()
+    let wallet = app.buttons.containing(.staticText, identifier: "Base Eth").firstMatch
+    XCTAssertTrue(wallet.waitForExistence(timeout: 15))
+    for _ in 0..<5 { if wallet.isHittable { break }; app.swipeUp() }
+    wallet.tap()
+    XCTAssertTrue(app.staticTexts["EVM wallet"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["History is building"].exists)
+    XCTAssertFalse(app.staticTexts["evm_wallet"].exists)
+    XCTAssertFalse(app.buttons["Retry sync"].exists)
+    let balance = app.staticTexts["ETH"]
+    for _ in 0..<5 { if balance.isHittable { break }; app.swipeUp() }
+    XCTAssertTrue(balance.isHittable)
+    let capture = XCTAttachment(screenshot: app.screenshot())
+    capture.name = largeText ? "Wallet accessibility" : "Wallet compact dark"
+    capture.lifetime = .keepAlways
+    add(capture)
+    let details = app.buttons["account-sync-details"]
+    for _ in 0..<5 { if details.isHittable { break }; app.swipeDown() }
+    details.tap()
+    XCTAssertTrue(app.buttons["Retry sync"].waitForExistence(timeout: 5))
+  }
+}

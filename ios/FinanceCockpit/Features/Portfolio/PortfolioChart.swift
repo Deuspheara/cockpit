@@ -4,14 +4,16 @@ import SwiftUI
 struct PortfolioValueChart: View {
   let dashboard: PortfolioDashboard
   @Binding var range: PortfolioRange
+  let compactEmptyHistory: Bool
   @MotionPreference private var reduceMotion
   @Environment(\.dynamicTypeSize) private var typeSize
   @State private var selectedDate: Date?
   @State private var changeExplanationPresented = false
 
-  init(dashboard: PortfolioDashboard, range: Binding<PortfolioRange>, initialSelection: Date? = nil)
+  init(dashboard: PortfolioDashboard, range: Binding<PortfolioRange>, initialSelection: Date? = nil, compactEmptyHistory: Bool = false)
   {
     self.dashboard = dashboard
+    self.compactEmptyHistory = compactEmptyHistory
     _range = range
     _selectedDate = State(initialValue: initialSelection)
   }
@@ -35,6 +37,7 @@ struct PortfolioValueChart: View {
         .accessibilityValue(
           FinanceFormat.amount(selected?.value ?? dashboard.value, currency: dashboard.currency))
 
+      if !compactEmptyHistory || !dashboard.chart.isEmpty {
       ZStack(alignment: .leading) {
         Text(
           (selected?.sourceAt ?? selected?.at ?? dashboard.asOf).formatted(
@@ -90,22 +93,30 @@ struct PortfolioValueChart: View {
       .frame(minHeight: 44, alignment: .leading)
       .animation(AppMotion.fade(reduceMotion), value: selected != nil)
       .accessibilityIdentifier("chart-subtitle")
+      }
 
       if !dashboard.complete {
         HStack(spacing: 6) {
           AppIcon(name: .warning, size: 16)
-          Text("Known subtotal · some prices or currency conversions are missing")
+          Text(compactEmptyHistory ? "Partial value · some prices or conversions are missing" : "Known subtotal · some prices or currency conversions are missing")
         }
         .font(.caption)
-        .foregroundStyle(.orange)
+        .foregroundStyle(compactEmptyHistory ? Color.secondary : Color.orange)
         .accessibilityElement(children: .combine)
       }
 
       Group {
         if dashboard.chart.isEmpty {
-          Text("No history for this period")
-            .font(.subheadline).foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+          VStack(alignment: .leading, spacing: 4) {
+            Text(compactEmptyHistory ? "History is building" : "No history for this period")
+              .font(.subheadline.weight(.medium))
+            if compactEmptyHistory {
+              Text("No recorded values in this period yet.").font(.caption)
+            }
+          }
+          .foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+          .frame(maxWidth: .infinity, alignment: compactEmptyHistory ? .leading : .center)
         } else {
           Chart {
             ForEach(dashboard.chart) { point in
@@ -148,7 +159,8 @@ struct PortfolioValueChart: View {
         }
 
       }
-      .frame(height: 200)
+      .frame(height: compactEmptyHistory && dashboard.chart.isEmpty ? nil : 200)
+      .frame(minHeight: compactEmptyHistory && dashboard.chart.isEmpty ? 64 : nil)
       .modifier(DatasetTransition(key: "\(dashboard.scope.rawValue)-\(dashboard.range.rawValue)"))
       .accessibilityIdentifier("portfolio-chart-plot")
 

@@ -15,7 +15,7 @@ struct AccountDetailView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         if let detail {
-          Text(detail.account.sourceType).font(.subheadline).foregroundStyle(.secondary)
+          Text(accountSourceTitle(detail.account.sourceType)).font(.subheadline).foregroundStyle(.secondary)
           if detail.performance != nil {
             Picker("Chart", selection: $chartMetric) {
               Text("Account equity").tag("Equity")
@@ -27,9 +27,12 @@ struct AccountDetailView: View {
               TradingPerformanceView(
                 performance: performance, range: $range, displayedRange: detail.dashboard.range)
             } else {
-              PortfolioValueChart(dashboard: detail.dashboard, range: $range)
+              PortfolioValueChart(dashboard: detail.dashboard, range: $range, compactEmptyHistory: true)
             }
           }.modifier(DatasetTransition(key: chartMetric))
+          if detail.account.sourceType != "manual" {
+            AccountSyncStatusView(accountID: accountID)
+          }
           if let summary = detail.derivatives { DerivativesSummaryView(summary: summary) }
           if let historyError = detail.historyError {
             Text(historyError).font(.caption).foregroundStyle(.secondary)
@@ -56,8 +59,8 @@ struct AccountDetailView: View {
               }
               Text(
                 position.quantity.map {
-                  "\(position.side.map { $0.capitalized + " " } ?? "")\(FinanceFormat.quantity($0)) · \(position.source)"
-                } ?? "Quantity unknown · \(position.source)"
+                  "\(position.side.map { $0.capitalized + " " } ?? "")\(FinanceFormat.quantity($0)) · \(accountSourceTitle(position.source))"
+                } ?? "Quantity unknown · \(accountSourceTitle(position.source))"
               ).font(.subheadline).foregroundStyle(.secondary)
               if position.assetType == "perp" {
                 if detail.account.sourceType == "dydx" {
@@ -93,7 +96,7 @@ struct AccountDetailView: View {
                 Text("Unrealized PnL: \(FinanceFormat.amount(pnl, currency: position.currency))")
                   .font(.caption).foregroundStyle(pnl.decimal >= 0 ? Color.green : Color.red)
               }
-              if position.costBasis == nil && position.unrealizedPnl == nil {
+              if position.costBasis == nil && position.unrealizedPnl == nil && detail.account.sourceType != "evm_wallet" {
                 Text("Return unavailable · incomplete cost basis").font(.caption).foregroundStyle(
                   .secondary)
               }
@@ -102,8 +105,8 @@ struct AccountDetailView: View {
                   "\(position.stale ? "Stale · " : "")\(at.formatted(date: .abbreviated, time: .shortened))"
                 ).font(.caption).foregroundStyle(.secondary)
               }
-            }.padding(.vertical, 4)
-            Divider()
+            }.padding(14)
+              .background(Color.primary.opacity(0.045), in: .rect(cornerRadius: 16))
           }
           if detail.derivatives != nil {
             DisclosureGroup("Collateral ledger") {
@@ -122,8 +125,10 @@ struct AccountDetailView: View {
           if detail.account.sourceType == "manual" {
             NavigationLink("Recurring investments") { RecurringView(accountID: accountID) }
           }
-          Text("Recent activity").font(.headline)
-          ForEach(detail.activity.prefix(20)) { item in ActivityRow(transaction: item) }
+          if !detail.activity.isEmpty {
+            Text("Recent activity").font(.headline)
+            ForEach(detail.activity.prefix(20)) { item in ActivityRow(transaction: item) }
+          }
         } else if error == nil {
           ProgressView("Loading account").frame(maxWidth: .infinity, minHeight: 220)
         }
@@ -162,11 +167,6 @@ struct AccountDetailView: View {
           await load()
         }
       }
-      .safeAreaInset(edge: .bottom) {
-        if let account = detail?.account, account.sourceType != "manual" {
-          AccountSyncStatusView(accountID: accountID).padding().background(.bar)
-        }
-      }
       .refreshable { await load() }
   }
   private func sync() async {
@@ -202,19 +202,46 @@ struct AccountSyncStatusView: View {
   @State private var run: AccountSyncResult?
   @State private var error: String?
   @State private var retrying = false
+  @State private var pollGeneration = 0
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
       if let run {
-        if run.status == "queued" || run.status == "running" { ProgressView("\(run.provider == "alchemy" ? "Alchemy" : "Account") sync \(run.status)…") }
-        if let failure = run.failure { Text(failure.message).foregroundStyle(.orange) }
-        ForEach(run.warnings ?? [], id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
-        if run.status == "failed" || run.status == "partial" {
-          Button("Retry sync") { Task { await retry() } }.disabled(retrying)
+        if run.status == "queued" || run.status == "running" {
+          ProgressView("Updating balances…").font(.subheadline)
+        } else if run.status == "partial" || run.status == "failed" {
+          DisclosureGroup {
+            VStack(alignment: .leading, spacing: 10) {
+              if let failure = run.failure { Text(failure.message) }
+              ForEach(run.warnings ?? [], id: \.self) { Text($0) }
+              Button("Retry sync") { Task { await retry() } }.disabled(retrying)
+                .buttonStyle(.bordered)
+            }.font(.caption).foregroundStyle(.secondary).padding(.top, 8)
+          } label: {
+            HStack(alignment: .top, spacing: 10) {
+              Image(systemName: run.status == "failed" ? "exclamationmark.circle" : "info.circle")
+                .foregroundStyle(run.status == "failed" ? Color.orange : Color.secondary)
+              VStack(alignment: .leading, spacing: 3) {
+                Text(run.status == "failed" ? "Sync needs another try" : "Balances updated")
+                  .font(.subheadline.weight(.medium))
+                Text(run.status == "failed" ? "Your saved holdings are still available." : "Some values or networks are incomplete.")
+                  .font(.caption).foregroundStyle(.secondary)
+              }
+            }
+          }.tint(.secondary).accessibilityIdentifier("account-sync-details")
+        } else if run.status == "success" {
+          Label("Up to date", systemImage: "checkmark.circle")
+            .font(.caption).foregroundStyle(.secondary)
         }
       }
-      if let error { Text(error).font(.caption).foregroundStyle(.orange); Button("Retry") { Task { await retry() } }.disabled(retrying) }
+      if let error {
+        Text(error).font(.caption).foregroundStyle(.secondary)
+        Button("Retry") { Task { await retry() } }.disabled(retrying)
+      }
     }
-    .task(id: scenePhase) {
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(14)
+    .background(Color.primary.opacity(0.045), in: .rect(cornerRadius: 16))
+    .task(id: "\(scenePhase)-\(pollGeneration)") {
       guard scenePhase == .active else { return }
       while !Task.isCancelled {
         do {
@@ -222,6 +249,7 @@ struct AccountSyncStatusView: View {
           if let api = environment.api {
             let latest: AccountSyncResult? = try await api.send("accounts/\(accountID)/sync-runs")
             run = latest
+            error = nil
           }
           if previous != run?.status && (run?.status == "success" || run?.status == "partial") { environment.dataRevision += 1 }
           try await Task.sleep(for: .seconds(3))
@@ -232,7 +260,18 @@ struct AccountSyncStatusView: View {
   private func retry() async {
     retrying = true
     defer { retrying = false }
-    do { run = try await environment.api?.send("accounts/\(accountID)/sync-runs", method: "POST"); error = nil }
+    do { run = try await environment.api?.send("accounts/\(accountID)/sync-runs", method: "POST"); error = nil; pollGeneration += 1 }
     catch { self.error = error.localizedDescription }
+  }
+}
+
+
+private func accountSourceTitle(_ source: String) -> String {
+  switch source {
+  case "evm_wallet": "EVM wallet"
+  case "manual": "Manual account"
+  case "dydx": "dYdX"
+  case "hyperliquid": "Hyperliquid"
+  default: source.replacingOccurrences(of: "_", with: " ").capitalized
   }
 }

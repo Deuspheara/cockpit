@@ -36,7 +36,9 @@
   @MainActor private final class InteractionFixtureStore {
     static let shared = InteractionFixtureStore()
     let initial = Account(
-      id: UUID(), name: "Test investments", assetClass: "equities", sourceType: "manual",
+      id: UUID(), name: ProcessInfo.processInfo.arguments.contains("--wallet-layout") ? "Base Eth" : "Test investments",
+      assetClass: ProcessInfo.processInfo.arguments.contains("--wallet-layout") ? "crypto" : "equities",
+      sourceType: ProcessInfo.processInfo.arguments.contains("--wallet-layout") ? "evm_wallet" : "manual",
       baseCurrency: "EUR", externalAddress: nil)
     var accounts: [Account] = []
     var assets = [
@@ -127,6 +129,9 @@
       }
       if path == "assets" { return try encode(assets) }
       if path.hasSuffix("/sync") || path.hasSuffix("/sync-runs") {
+        if ProcessInfo.processInfo.arguments.contains("--wallet-layout") {
+          return try encode(["status": JSONValue.string("partial"), "provider": .string("alchemy"), "warnings": .array([.string("base-mainnet: Some token prices are unavailable; balances synchronized without valuation")])])
+        }
         if ProcessInfo.processInfo.arguments.contains("--sync-failure") {
           throw APIError(message: "Fixture sync unavailable")
         }
@@ -148,7 +153,9 @@
         let account = accounts.first { $0.id.uuidString.lowercased() == id.lowercased() } ?? initial
         return try encode(
           AccountDetail(
-            account: account, dashboard: dashboard(range: range, scope: scope), positions: [],
+            account: account, dashboard: dashboard(range: range, scope: scope), positions: ProcessInfo.processInfo.arguments.contains("--wallet-layout") ? [
+              Position(assetId: candidateID, symbol: "ETH", name: "Ethereum", assetType: "crypto", quantity: Amount(0.12), price: nil, marketValue: Amount(503.45), currency: "USD", costBasis: nil, unrealizedPnl: nil, source: "evm_wallet", observedAt: Date(), stale: false, side: nil)
+            ] : [],
             activity: []))
       }
       if path == "portfolio/assets" || path == "activity" { return Data("[]".utf8) }
@@ -189,10 +196,11 @@
     }
     func dashboard(range: PortfolioRange, scope: PortfolioScope) -> PortfolioDashboard {
       let base = PortfolioDashboard.preview
-      let points = range == .day ? Array(base.chart.suffix(1)) : range == .week ? [] : base.chart
+      let wallet = ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+      let points = wallet ? [] : range == .day ? Array(base.chart.suffix(1)) : range == .week ? [] : base.chart
       return PortfolioDashboard(
-        scope: scope, range: range, currency: "EUR", value: base.value,
-        complete: true, absoluteChange: base.absoluteChange, percentChange: base.percentChange,
+        scope: scope, range: range, currency: "EUR", value: wallet ? Amount(433.19) : base.value,
+        complete: !wallet, absoluteChange: wallet ? nil : base.absoluteChange, percentChange: wallet ? nil : base.percentChange,
         asOf: base.asOf, chart: points, allocation: base.allocation,
         accounts: ([initial] + accounts).map {
           AccountRow(
