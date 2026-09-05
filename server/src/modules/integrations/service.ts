@@ -121,17 +121,27 @@ export class SyncService {
       } catch {
         throw new ConflictError("A sync is already in progress");
       }
+    let receivedProviderData = false;
     try {
       const result = await provider.syncAccount(
         account,
         (previous?.cursor ?? {}) as Record<string, unknown>,
       );
+      receivedProviderData = true;
       if (!result.coveredScopes.length && !result.positions.length)
         throw new AppError(
-          "PROVIDER_ERROR",
-          result.warnings.join("; ") || "No provider data available",
+          result.failure?.code ?? "PROVIDER_ERROR",
+          result.failure?.message ??
+            (result.warnings.join("; ") || "No provider data available"),
           502,
-          { warnings: result.warnings },
+          {
+            warnings: result.warnings,
+            retryable: result.failure?.retryable ?? true,
+            networkWarnings: result.warnings.map((message) => ({
+              network: message.split(":")[0],
+              message,
+            })),
+          },
         );
       const observedAt = new Date();
       await this.database.sql.begin(async (tx) => {
@@ -191,31 +201,42 @@ export class SyncService {
         warnings: result.warnings,
       };
     } catch (error) {
-      const message =
-        account.sourceType === "evm_wallet"
-          ? error instanceof AppError && error.code === "ALCHEMY_NOT_CONFIGURED"
-            ? error.message
-            : "Alchemy unavailable. Your wallet is saved; retry synchronization."
-          : error instanceof AppError
-            ? error.message
-            : "Provider data could not be validated or saved";
+      const saveFailure = receivedProviderData && !(error instanceof AppError);
+      const alchemyError =
+        error instanceof AppError && error.code.startsWith("ALCHEMY_");
+      const message = alchemyError
+        ? error.message
+        : saveFailure
+          ? "Synchronization data could not be saved on the server. Your account is saved; retry synchronization."
+          : account.sourceType === "evm_wallet"
+            ? "Alchemy unavailable. Your wallet is saved; retry synchronization."
+            : error instanceof AppError
+              ? error.message
+              : "Provider data could not be validated or saved";
       const failure = {
-        code:
-          account.sourceType === "evm_wallet"
-            ? error instanceof AppError &&
-              error.code === "ALCHEMY_NOT_CONFIGURED"
-              ? error.code
-              : "ALCHEMY_UNAVAILABLE"
-            : "PROVIDER_ERROR",
+        code: alchemyError
+          ? error.code
+          : saveFailure
+            ? "SYNC_SAVE_FAILED"
+            : account.sourceType === "evm_wallet"
+              ? "ALCHEMY_UNAVAILABLE"
+              : "PROVIDER_ERROR",
         message,
-        retryable: true,
+        retryable:
+          error instanceof AppError &&
+          typeof (error.details as { retryable?: unknown } | undefined)
+            ?.retryable === "boolean"
+            ? (error.details as { retryable: boolean }).retryable
+            : true,
       };
       await this.database
-        .sql`UPDATE sync_runs SET status='failed',error_message=${message},details=${this.database.sql.json({ failure, ...(error instanceof AppError ? (error.details as Record<string, string[]>) : {}) })},finished_at=now() WHERE id=${runId}`;
+        .sql`UPDATE sync_runs SET status='failed',error_message=${message},details=${this.database.sql.json({ failure, ...(error instanceof AppError ? (error.details as Record<string, unknown>) : {}) })},finished_at=now() WHERE id=${runId}`;
       try {
         await this.cache.incr("portfolio:revision");
       } catch {}
-      throw new AppError(failure.code, message, 502, { retryable: true });
+      throw new AppError(failure.code, message, 502, {
+        retryable: failure.retryable,
+      });
     }
   }
   async syncAll() {

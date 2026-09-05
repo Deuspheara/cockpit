@@ -47,6 +47,7 @@ export interface ProviderHistoryPoint {
   currency: string;
 }
 export interface ProviderSyncResult {
+  failure?: { code: string; message: string; retryable: boolean };
   history?: ProviderHistoryPoint[];
   positions: ProviderPosition[];
   transactions: ProviderTransaction[];

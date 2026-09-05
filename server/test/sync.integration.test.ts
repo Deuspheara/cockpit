@@ -1,4 +1,5 @@
 import { beforeAll, afterAll, describe, it, expect } from "vitest";
+import { AlchemyPortfolioAdapter } from "../src/modules/integrations/alchemy/adapter.js";
 import { migrate } from "../src/db/migrate.js";
 import { connectDatabase } from "../src/db/index.js";
 import { connectCache } from "../src/shared/cache.js";
@@ -139,5 +140,107 @@ describe.skipIf(!url)("provider persistence and failures", () => {
         )
       ).value,
     ).toBe("0.000000000000000000");
+  });
+  it("saves HTTP 200 native balances, exposes partial prices, and retries rejected Alchemy credentials", async () => {
+    const wallet = await new AccountService(db).create({
+      name: "Alchemy response fixture",
+      assetClass: "crypto",
+      sourceType: "evm_wallet",
+      externalAddress: "0x" + "a".repeat(40),
+    });
+    let rejected = false;
+    const provider = new AlchemyPortfolioAdapter(
+      "fixture",
+      ["base-mainnet"],
+      async () =>
+        rejected
+          ? new Response("secret upstream text", { status: 401 })
+          : Response.json({
+              data: {
+                tokens: [
+                  {
+                    network: "base-mainnet",
+                    tokenAddress: null,
+                    tokenBalance: "0xde0b6b3a7640000",
+                    tokenMetadata: { symbol: null, name: null, decimals: null },
+                    tokenPrices: null,
+                  },
+                ],
+              },
+            }),
+    );
+    const service = new SyncService(
+      db,
+      cache,
+      readConfig({ ...process.env, DATABASE_URL: url }),
+      { evm_wallet: provider },
+    );
+    const run = await service.enqueue(wallet.id);
+    await service.runQueued();
+    expect(await service.getRun(wallet.id, String(run!.id))).toMatchObject({
+      status: "partial",
+      provider: "alchemy",
+    });
+    const observations =
+      await db.sql`SELECT quantity FROM holding_observations WHERE account_id=${wallet.id}`;
+    expect(observations[0]!.quantity).toBe("1.000000000000000000");
+    rejected = true;
+    const failed = await service.enqueue(wallet.id);
+    await service.runQueued();
+    expect(await service.getRun(wallet.id, String(failed!.id))).toMatchObject({
+      status: "failed",
+      failure: { code: "ALCHEMY_AUTH_FAILED", retryable: false },
+    });
+    expect(await new AccountService(db).get(wallet.id)).toBeDefined();
+    expect(
+      await db.sql`SELECT quantity FROM holding_observations WHERE account_id=${wallet.id}`,
+    ).toHaveLength(1);
+    rejected = false;
+    const retry = await service.enqueue(wallet.id);
+    await service.runQueued();
+    expect(await service.getRun(wallet.id, String(retry!.id))).toMatchObject({
+      status: "partial",
+    });
+  });
+  it("does not blame Alchemy when successful provider data cannot be saved", async () => {
+    const wallet = await new AccountService(db).create({
+      name: "Invalid persistence fixture",
+      assetClass: "crypto",
+      sourceType: "evm_wallet",
+      externalAddress: "0x" + "b".repeat(40),
+    });
+    const provider = new AlchemyPortfolioAdapter(
+      "fixture",
+      ["base-mainnet"],
+      async () => Response.json({ data: { tokens: [] } }),
+    );
+    const original = provider.syncAccount.bind(provider);
+    provider.syncAccount = async (account) => {
+      const result = await original(account);
+      result.positions.push({
+        asset: {
+          key: "invalid",
+          name: "Bad",
+          symbol: "BAD",
+          assetType: "crypto",
+        },
+        scope: "base-mainnet",
+        quantity: "invalid",
+        currency: "USD",
+      });
+      return result;
+    };
+    const service = new SyncService(
+      db,
+      cache,
+      readConfig({ ...process.env, DATABASE_URL: url }),
+      { evm_wallet: provider },
+    );
+    const run = await service.enqueue(wallet.id);
+    await service.runQueued();
+    expect(await service.getRun(wallet.id, String(run!.id))).toMatchObject({
+      status: "failed",
+      failure: { code: "SYNC_SAVE_FAILED" },
+    });
   });
 });

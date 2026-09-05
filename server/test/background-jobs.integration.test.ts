@@ -237,7 +237,7 @@ describe.skipIf(!url)("durable asynchronous imports and wallet sync", () => {
     expect(await sync.getRun(account.id)).toMatchObject({
       status: "failed",
       provider: "alchemy",
-      failure: { code: "ALCHEMY_NOT_CONFIGURED", retryable: true },
+      failure: { code: "ALCHEMY_NOT_CONFIGURED", retryable: false },
     });
     let calls = 0;
     const healthy = new SyncService(db, cache, config, {

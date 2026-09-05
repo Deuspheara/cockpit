@@ -40,3 +40,13 @@ Statuses are `queued`, `running`, `success`, `partial`, `failed`. EVM DTOs ident
 The iOS unit suite covers job restoration and distinct provider errors. `ScreenshotWizardTests` exercises the five-stage flow, individual editing, return from Confirm, Apply/Undo, large text, and dismissal during analysis using in-memory HTTP fixtures.
 
 Validation completed after Docker recovery (2026-09-05): backend TypeScript check passed; all 116 tests across 24 suites passed with PostgreSQL and Redis, including a populated schema-0008 upgrade regression. The running application's HTTP health endpoint, database/Redis readiness, and worker heartbeat were healthy. The earlier iOS simulator pass completed 37 unit tests and two wizard UI tests. These checks do not deploy the workspace changes to the running application.
+
+## Alchemy configuration and HTTP 200 responses
+
+Set `ALCHEMY_API_KEY` in the VPS `.env`; both `api` and `worker` load that file. Set `ALCHEMY_NETWORKS=eth-mainnet,base-mainnet,arb-mainnet` (or a subset). Recreate both services after configuration changes. The adapter uses the documented Portfolio API `POST https://api.g.alchemy.com/data/v1/{apiKey}/assets/tokens/by-address`, with metadata, prices, native tokens and ERC-20 tokens enabled, one independently paginated request per network. Keys and upstream response bodies must never be logged.
+
+HTTP 200 is transport success, not proof of a complete portfolio. Top-level `error.partialErrors` marks incomplete networks; per-token errors describe metadata/pricing failures. Balance parsing is independent of enrichment: zero balances need no metadata, native ETH uses 18 decimals on the supported networks, and missing prices preserve quantities without inventing values. Unknown ERC-20 decimals or malformed rows prevent full coverage, retaining older observations for missing tokens. A later page failure preserves earlier pages. No failed or incomplete network may zero out unseen holdings.
+
+Failures distinguish rejected credentials, rate limiting, unreadable responses, incomplete data, and local persistence errors. In particular, a database failure is `SYNC_SAVE_FAILED`, not `ALCHEMY_UNAVAILABLE`. Retry uses the existing saved wallet.
+
+References checked 2026-09-05: [Tokens By Wallet](https://www.alchemy.com/docs/data/portfolio-apis/portfolio-api-endpoints/portfolio-api-endpoints/get-tokens-by-address), [partial-failure handling](https://www.alchemy.com/docs/reference/portfolio-apis#handling-partial-failures).
