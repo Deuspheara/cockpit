@@ -166,6 +166,9 @@ struct TradingPerformance: Codable, Sendable {
 struct SessionInfo: Codable, Sendable {
   struct AI: Codable, Sendable {
     let configured: Bool
+    let keyConfigured: Bool
+    let chatConfigured: Bool
+    let visionConfigured: Bool
     let primaryModel: String
     let visionModel: String
   }

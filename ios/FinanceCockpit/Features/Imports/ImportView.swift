@@ -31,6 +31,7 @@ struct ImportView: View {
   @State private var working = false
   @State private var reviewID: UUID?
   var body: some View {
+    let pickerTitle = session == nil ? "Choose screenshots" : "Add screenshots"
     Form {
       Section {
         Text("Import explicit positions").font(.headline)
@@ -38,12 +39,14 @@ struct ImportView: View {
           "Screenshots go to your server’s configured vision model. Only structured extraction is retained by your server. Missing history remains unknown."
         ).font(.callout).foregroundStyle(.secondary)
         PhotosPicker(selection: $selected, maxSelectionCount: 5, matching: .images) {
-          Label(
-            session == nil ? "Choose screenshots" : "Add screenshots",
-            systemImage: "photo.on.rectangle")
-        }.disabled(working || environment.sessionInfo?.ai.configured == false)
-        if environment.sessionInfo?.ai.configured == false {
-          Text("Configure OpenRouter on the server to enable extraction.").font(.caption)
+          HStack(spacing: 8) {
+            AppIcon(name: .photo, size: 18)
+            Text(pickerTitle)
+          }
+        }.disabled(working || !environment.aiAvailability.visionConfigured)
+        if environment.sessionInfo != nil && !environment.aiAvailability.visionConfigured {
+          Text("Configure an OpenRouter key and vision model on the server to enable extraction.")
+            .font(.caption)
             .foregroundStyle(.secondary)
         }
       }

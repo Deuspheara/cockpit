@@ -57,7 +57,21 @@ The first successful connection records an initial valuation immediately. Later 
 
 Set `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_PRIMARY` and `OPENROUTER_MODEL_VISION` in the server `.env`; run `make up`. Choose a primary model supporting function tools and a vision model supporting images plus strict JSON-schema output. Keys never go to the app. Settings reports configuration and model IDs.
 
-Portfolio's sparkle button opens chat; Add → Import screenshot opens the same import flow available from chat. Screenshots accept PNG/JPEG, up to five per session and 12 MB each. Provide missing dates/currencies/quantities explicitly, then inspect the change review. Sending a screenshot or a chat message transmits its relevant financial context to OpenRouter and the configured model provider. Original images are not stored by this application; upstream retention depends on your provider configuration.
+Portfolio's assistant button immediately left of + opens full-screen chat; Add → Import screenshot opens the same import flow available from chat. Screenshots accept PNG/JPEG, up to five per session and 12 MB each. Provide missing dates/currencies/quantities explicitly, then inspect the change review. Sending a screenshot or a chat message transmits its relevant financial context to OpenRouter and the configured model provider. Original images are not stored by this application; upstream retention depends on your provider configuration.
+
+## Asset logos
+
+Portfolio → Assets displays online logos, with a neutral symbol badge for loading, missing images, ambiguous identities, and offline assets without cached images. The bottom bar contains Home, Activity, and Settings; closing the toolbar assistant preserves the Portfolio filters and Accounts/Assets selection.
+
+Crypto metadata comes from [CoinPaprika](https://docs.coinpaprika.com/api-reference/coins/get-coin-by-id), without a new API key. Resolution uses active coins with an exact symbol and name, or a unique symbol when the stored name is the symbol/provider-generated perpetual name. BTC, ETH, SOL, and HYPE perpetuals use canonical underlying coin IDs to distinguish duplicate tickers. Existing `externalIds.coinpaprika` can explicitly identify a coin. Contract-backed tokens require that explicit ID; symbols alone must not assign them another token's logo.
+
+To enable stocks and ETFs, set `LOGO_DEV_PUBLISHABLE_KEY` in the server `.env` to the **publishable** key from your [Logo.dev dashboard](https://www.logo.dev/dashboard), then restart the API (`make up`). Never put a secret Logo.dev key in this variable: the publishable key is included in image URLs sent to the app. No subscription is purchased by this integration. Without a key, securities keep the fallback badge.
+
+Securities prefer `externalIds.isin`. Otherwise use an exchange-qualified symbol (for example `AIR.PA` or `VWCE.DE`) in `externalIds.ticker` or `symbol`; unsuffixed US tickers require an explicit `externalIds.exchange` of `NASDAQ`, `NYSE`, `NYSEARCA`, `AMEX`, `XNAS`, `XNYS`, or `ARCX`. Quote currency does not establish listing identity. These fields already exist in the asset API; no migration is needed. Logo.dev maps securities to company/issuer logos, and coverage varies by ETF.
+
+Successful and unmatched lookup results are cached in the API process for 24 hours (bounded to 2,000 entries); restarting the API clears this metadata cache. Transient failures have a 60-second retry cooldown to avoid hammering an unavailable provider. Cold lookup batches have a 2.5-second deadline and at most four concurrent lookups. Provider failures return holdings without logos. Images load directly from the provider CDN through a separate on-device HTTP cache (8 MB memory / 50 MB disk), respect provider cache headers, and use previously cached images when offline. The providers receive asset identifiers and normal request metadata, never account names, quantities, balances, or finance API credentials.
+
+The Assets list includes provider credit links. [Logo.dev attribution rules](https://www.logo.dev/docs/platform/attribution) currently exempt personal projects and paid plans. For commercial use on its free plan, also put “Logos provided by Logo.dev” linking to `https://logo.dev` on the app's public website or App Store listing and complete the provider's verification. The in-app link alone does not fulfill that public attribution requirement. CoinPaprika is credited beneath crypto logos.
 
 ## Tests and builds
 

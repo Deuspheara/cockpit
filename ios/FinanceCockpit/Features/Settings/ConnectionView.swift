@@ -10,7 +10,12 @@ struct ConnectionView: View {
     NavigationStack {
       Form {
         Section {
-          Label("Your private portfolio", systemImage: "chart.xyaxis.line").font(.title2)
+          HStack(spacing: 10) {
+            AppIcon(name: .chart, size: 26)
+            Text("Your private portfolio")
+          }
+          .font(.title2)
+          .accessibilityElement(children: .combine)
           Text(
             "Connect to your finance server with a device token. Crypto connections use public addresses only."
           ).foregroundStyle(.secondary)

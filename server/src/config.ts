@@ -12,6 +12,7 @@ const schema = z.object({
   OPENROUTER_API_KEY: z.string().default(""),
   OPENROUTER_MODEL_PRIMARY: z.string().default(""),
   OPENROUTER_MODEL_VISION: z.string().default(""),
+  LOGO_DEV_PUBLISHABLE_KEY: z.string().trim().default(""),
   ALCHEMY_API_KEY: z.string().default(""),
   ALCHEMY_NETWORKS: z.string().default("eth-mainnet,base-mainnet,arb-mainnet"),
   MAX_UPLOAD_MB: z.coerce.number().int().min(1).max(25).default(12),

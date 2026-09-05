@@ -120,8 +120,13 @@ struct AccountDetailView: View {
       .toolbar {
         if detail?.account.sourceType != "manual" {
           ToolbarItem(placement: .topBarTrailing) {
-            Button("Sync account", systemImage: "arrow.clockwise") { Task { await sync() } }
-              .disabled(syncing)
+            Button {
+              Task { await sync() }
+            } label: {
+              AppIcon(name: .sync, size: 20).frame(width: 44, height: 44)
+            }
+            .accessibilityLabel("Sync account")
+            .disabled(syncing)
           }
         }
       }

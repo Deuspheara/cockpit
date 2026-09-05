@@ -4,7 +4,9 @@ struct Diagnostics: Decodable, Sendable {
   let dbReachable: Bool
   let redisReachable: Bool
   let workerHeartbeat: Date?
-  let aiConfigured: Bool
+  let keyConfigured: Bool
+  let chatConfigured: Bool
+  let visionConfigured: Bool
   let walletConfigured: Bool
 }
 struct DiagnosticsView: View {
@@ -23,8 +25,10 @@ struct DiagnosticsView: View {
             value: diagnostics.workerHeartbeat.map {
               $0.formatted(date: .abbreviated, time: .standard)
             } ?? "No heartbeat")
+          LabeledContent("OpenRouter key", value: diagnostics.keyConfigured ? "Ready" : "Missing")
+          LabeledContent("Assistant", value: diagnostics.chatConfigured ? "Ready" : "Not ready")
           LabeledContent(
-            "OpenRouter", value: diagnostics.aiConfigured ? "Configured" : "Not configured")
+            "Screenshot import", value: diagnostics.visionConfigured ? "Ready" : "Not ready")
           LabeledContent(
             "Alchemy", value: diagnostics.walletConfigured ? "Configured" : "Not configured")
         }

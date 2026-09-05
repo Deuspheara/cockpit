@@ -30,10 +30,10 @@ struct BotsView: View {
         Text("Paper only · no trading credentials").font(.subheadline).foregroundStyle(.secondary)
       }
       if bots.isEmpty {
-        ContentUnavailableView(
-          "Paper strategies", systemImage: "cpu",
-          description: Text(
-            "Add a heartbeat strategy to verify scheduled execution and run history."))
+        AppEmptyState(
+          title: "Paper strategies",
+          description: "Add a heartbeat strategy to verify scheduled execution and run history.",
+          icon: .bot)
         Button("Add disabled heartbeat strategy") { Task { await create() } }.disabled(creating)
       }
       ForEach(bots) { bot in
@@ -100,9 +100,10 @@ struct BotHistoryView: View {
   var body: some View {
     List {
       if runs.isEmpty {
-        ContentUnavailableView(
-          "No runs yet", systemImage: "clock",
-          description: Text("Enable the strategy to start scheduled heartbeats."))
+        AppEmptyState(
+          title: "No runs yet",
+          description: "Enable the strategy to start scheduled heartbeats.",
+          icon: .clock)
       }
       ForEach(runs) { run in
         VStack(alignment: .leading, spacing: 5) {

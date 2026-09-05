@@ -24,12 +24,32 @@ struct FinanceCockpitApp: App {
   }
 }
 struct AppTabs: View {
+  private enum AppTab: Hashable { case home, activity, settings }
+  @State private var selection: AppTab = .home
+
   var body: some View {
-    TabView {
-      Tab("Portfolio", systemImage: "chart.xyaxis.line") { NavigationStack { PortfolioView() } }
-      Tab("Activity", systemImage: "clock.arrow.circlepath") { NavigationStack { ActivityView() } }
-      Tab("Bots", systemImage: "cpu") { NavigationStack { BotsView() } }
-      Tab("Settings", systemImage: "gearshape") { NavigationStack { SettingsView() } }
+    TabView(selection: $selection) {
+      Tab(value: .home) {
+        NavigationStack { PortfolioView() }
+      } label: {
+        AppIcon(name: .home, size: 25, decorative: false)
+          .accessibilityLabel("Home")
+          .accessibilityHint("Shows your portfolio")
+      }
+      Tab(value: .activity) {
+        NavigationStack { ActivityView() }
+      } label: {
+        AppIcon(name: .activity, size: 25, decorative: false)
+          .accessibilityLabel("Activity")
+          .accessibilityHint("Shows account activity")
+      }
+      Tab(value: .settings) {
+        NavigationStack { SettingsView() }
+      } label: {
+        AppIcon(name: .settings, size: 25, decorative: false)
+          .accessibilityLabel("Settings")
+          .accessibilityHint("Opens app settings")
+      }
     }
   }
 }

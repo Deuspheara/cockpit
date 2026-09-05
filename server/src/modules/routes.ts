@@ -8,6 +8,8 @@ import type { Cache } from "../shared/cache.js";
 import type { Config } from "../config.js";
 import { ActivityService } from "./activity/service.js";
 import { AccountService } from "./accounts/service.js";
+import { AssetLogoService } from "./assets/logos.js";
+import type { Asset } from "./assets/service.js";
 import { AssetService } from "./assets/service.js";
 import { ChangeSetService } from "./changes/service.js";
 import { LedgerService } from "./ledger/service.js";
@@ -33,6 +35,7 @@ export async function registerFinanceRoutes(
     assets = new AssetService(database),
     changes = new ChangeSetService(database),
     ledger = new LedgerService(database);
+  const logos = new AssetLogoService(config.LOGO_DEV_PUBLISHABLE_KEY);
   const portfolio = new PortfolioService(database),
     recurring = new RecurringService(database),
     reconciliation = new ReconciliationService(database);
@@ -133,7 +136,7 @@ export async function registerFinanceRoutes(
       accounts.list(),
       portfolio.positions(),
     ]);
-    return all
+    const rows = all
       .filter(
         (a) =>
           scope === "global" ||
@@ -148,6 +151,19 @@ export async function registerFinanceRoutes(
           accountName: a.name,
         })),
       );
+    if (!rows.length) return rows;
+    try {
+      const ids = [...new Set(rows.map((row) => row.assetId))];
+      const metadata = await database.sql<Asset[]>`
+        SELECT * FROM assets WHERE id = ANY(${ids}::uuid[])`;
+      const resolved = await logos.resolveAll(metadata);
+      return rows.map((row) => ({
+        ...row,
+        logoUrl: resolved.get(row.assetId) ?? null,
+      }));
+    } catch {
+      return rows;
+    }
   });
   app.get("/api/v1/portfolio/dashboard", async (request) => {
     const { scope, range } = z

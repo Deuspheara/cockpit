@@ -11,6 +11,23 @@ import { connectDatabase, type Database } from "./db/index.js";
 import { connectCache, type Cache } from "./shared/cache.js";
 import { AuthService } from "./modules/auth/service.js";
 import { AppError } from "./shared/errors.js";
+
+export function aiConfigurationStatus(
+  config: Pick<
+    Config,
+    | "OPENROUTER_API_KEY"
+    | "OPENROUTER_MODEL_PRIMARY"
+    | "OPENROUTER_MODEL_VISION"
+  >,
+) {
+  const keyConfigured = !!config.OPENROUTER_API_KEY;
+  return {
+    keyConfigured,
+    chatConfigured: keyConfigured && !!config.OPENROUTER_MODEL_PRIMARY,
+    visionConfigured: keyConfigured && !!config.OPENROUTER_MODEL_VISION,
+  };
+}
+
 export async function createApp(
   config: Config,
   dependencies?: { database: Database; cache: Cache },
@@ -95,15 +112,19 @@ export async function createApp(
       return reply.code(503).send({ status: "unhealthy" });
     }
   });
-  app.get("/api/v1/session", async () => ({
-    apiVersion: "1",
-    ai: {
-      configured: !!config.OPENROUTER_API_KEY,
-      primaryModel: config.OPENROUTER_MODEL_PRIMARY,
-      visionModel: config.OPENROUTER_MODEL_VISION,
-    },
-    walletConfigured: !!config.ALCHEMY_API_KEY,
-  }));
+  app.get("/api/v1/session", async () => {
+    const ai = aiConfigurationStatus(config);
+    return {
+      apiVersion: "1",
+      ai: {
+        configured: ai.chatConfigured,
+        ...ai,
+        primaryModel: config.OPENROUTER_MODEL_PRIMARY,
+        visionModel: config.OPENROUTER_MODEL_VISION,
+      },
+      walletConfigured: !!config.ALCHEMY_API_KEY,
+    };
+  });
   app.get("/api/v1/diagnostics", async () => {
     let db = false;
     let redis = false;
@@ -117,12 +138,14 @@ export async function createApp(
     const heartbeat = db
       ? await database.sql`SELECT seen_at FROM worker_heartbeat WHERE id=1`
       : [];
+    const ai = aiConfigurationStatus(config);
     return {
       apiVersion: "1",
       dbReachable: db,
       redisReachable: redis,
       workerHeartbeat: heartbeat[0]?.seenAt ?? null,
-      aiConfigured: !!config.OPENROUTER_API_KEY,
+      aiConfigured: ai.chatConfigured,
+      ...ai,
       walletConfigured: !!config.ALCHEMY_API_KEY,
     };
   });

@@ -54,7 +54,11 @@ struct ChangeSetReview: View {
             Button("Reject", role: .destructive) { Task { await action("reject") } }.disabled(
               working)
           } else if change.status == "applied" {
-            Label("Applied", systemImage: "checkmark.circle")
+            HStack(spacing: 8) {
+              AppIcon(name: .connected, size: 18)
+              Text("Applied")
+            }
+            .accessibilityElement(children: .combine)
             Button("Undo changes") { Task { await action("undo") } }.disabled(working)
           } else {
             Text(change.status.capitalized)

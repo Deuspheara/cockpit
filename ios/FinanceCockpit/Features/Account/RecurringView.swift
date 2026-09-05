@@ -64,9 +64,10 @@ struct RecurringView: View {
         }
       }
       if rules.isEmpty && error == nil {
-        ContentUnavailableView(
-          "No recurring rules", systemImage: "repeat",
-          description: Text("Create a recurring investment from Add manually in Portfolio."))
+        AppEmptyState(
+          title: "No recurring rules",
+          description: "Create a recurring investment from Add manually in Portfolio.",
+          icon: .recurring)
       }
       if let error { Text(error).foregroundStyle(.red) }
     }.navigationTitle("Recurring investments")

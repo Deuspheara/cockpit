@@ -12,6 +12,7 @@ struct PortfolioAssetLine: Decodable, Identifiable, Sendable {
   let currency: String
   let source: String
   let stale: Bool
+  var logoUrl: String? = nil
 }
 struct PortfolioAssetsView: View {
   let scope: PortfolioScope
@@ -24,23 +25,18 @@ struct PortfolioAssetsView: View {
         NavigationLink {
           AccountDetailView(accountID: line.accountId)
         } label: {
-          HStack {
-            VStack(alignment: .leading, spacing: 4) {
-              Text(line.symbol).font(.headline)
-              Text("\(line.accountName) · \(FinanceFormat.quantity(line.quantity)) units").font(
-                .caption
-              ).foregroundStyle(.secondary)
-              Text("\(line.source)\(line.stale ? " · Stale" : "")").font(.caption).foregroundStyle(
-                .secondary)
-            }
-            Spacer()
-            Text(
-              line.marketValue.map { FinanceFormat.amount($0, currency: line.currency) }
-                ?? "Unavailable"
-            ).monospacedDigit()
-          }.padding(.vertical, 5).contentShape(Rectangle())
+          PortfolioAssetRow(line: line)
         }.buttonStyle(.plain)
         Divider()
+      }
+      if lines.contains(where: { AssetLogo.remoteURL($0.logoUrl)?.host == "static.coinpaprika.com" }
+      ) {
+        Link("Crypto logos by CoinPaprika", destination: URL(string: "https://coinpaprika.com")!)
+          .font(.caption)
+      }
+      if lines.contains(where: { AssetLogo.remoteURL($0.logoUrl)?.host == "img.logo.dev" }) {
+        Link("Logos provided by Logo.dev", destination: URL(string: "https://logo.dev")!)
+          .font(.caption)
       }
       if let error { Text(error).foregroundStyle(.red) }
     }.task(id: "\(scope.rawValue)-\(environment.dataRevision)") {
@@ -53,5 +49,41 @@ struct PortfolioAssetsView: View {
         error = nil
       } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
     }
+  }
+}
+
+struct PortfolioAssetRow: View {
+  let line: PortfolioAssetLine
+  var logoLoader: AssetLogoLoader = .shared
+  @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+  var body: some View {
+    HStack(alignment: .top, spacing: 12) {
+      AssetLogo(symbol: line.symbol, urlString: line.logoUrl, loader: logoLoader)
+      VStack(alignment: .leading, spacing: 4) {
+        Text(line.symbol).font(.headline)
+        Text("\(line.accountName) · \(FinanceFormat.quantity(line.quantity)) units")
+          .font(.caption).foregroundStyle(.secondary)
+        Text("\(line.source)\(line.stale ? " · Stale" : "")")
+          .font(.caption).foregroundStyle(.secondary)
+        if dynamicTypeSize.isAccessibilitySize { value }
+      }
+      if !dynamicTypeSize.isAccessibilitySize {
+        Spacer(minLength: 8)
+        value
+      }
+    }
+    .padding(.vertical, 5)
+    .frame(minHeight: 44)
+    .contentShape(Rectangle())
+    .accessibilityElement(children: .combine)
+  }
+
+  private var value: some View {
+    Text(
+      line.marketValue.map { FinanceFormat.amount($0, currency: line.currency) } ?? "Unavailable"
+    )
+    .monospacedDigit()
+    .fixedSize(horizontal: false, vertical: true)
   }
 }

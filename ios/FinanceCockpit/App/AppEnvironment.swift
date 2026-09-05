@@ -1,6 +1,15 @@
 import Foundation
 import Observation
 
+struct AIAvailability: Equatable, Sendable {
+  let keyConfigured: Bool
+  let chatConfigured: Bool
+  let visionConfigured: Bool
+
+  static let unknown = AIAvailability(
+    keyConfigured: false, chatConfigured: false, visionConfigured: false)
+}
+
 @MainActor @Observable
 final class AppEnvironment {
   var api: APIClient?
@@ -10,6 +19,13 @@ final class AppEnvironment {
   var connectionError: String?
   var lastSuccessfulRefresh: Date?
   var dataRevision = 0
+  var aiAvailability: AIAvailability {
+    guard let ai = sessionInfo?.ai else { return .unknown }
+    return AIAvailability(
+      keyConfigured: ai.keyConfigured,
+      chatConfigured: ai.chatConfigured,
+      visionConfigured: ai.visionConfigured)
+  }
   init() {
     serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
     do {
@@ -33,8 +49,9 @@ final class AppEnvironment {
     connectionError = nil
   }
   func testConnection() async {
+    guard let api else { return }
     do {
-      sessionInfo = try await api?.send("session")
+      sessionInfo = try await api.send("session")
       connectionError = nil
     } catch { connectionError = error.localizedDescription }
   }
