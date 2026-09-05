@@ -11,7 +11,7 @@ const resultSchema = z.array(
       Exchange: z.string(),
       Name: z.string(),
       Type: z.string(),
-      Country: z.string().optional(),
+      Country: z.string().nullish(),
       Currency: z.string(),
       ISIN: z.string().nullable().optional(),
       previousClose: z.union([z.string(), z.number()]).nullable().optional(),
@@ -35,7 +35,7 @@ export interface MarketCandidate {
 }
 
 export interface MarketDataProvider {
-  search(query: string, signal?: AbortSignal): Promise<MarketCandidate[]>;
+  search(query: string, signal?: AbortSignal, onWarning?: (message: string) => void): Promise<MarketCandidate[]>;
 }
 
 export function isEligiblePreviousClose(
@@ -71,33 +71,37 @@ export class EODHDMarketData implements MarketDataProvider {
   async search(
     query: string,
     signal?: AbortSignal,
+    onWarning?: (message: string) => void,
   ): Promise<MarketCandidate[]> {
-    if (!this.config.EODHD_API_TOKEN) return [];
     const normalized = query.trim().toLowerCase().replace(/\s+/g, " ");
     if (!normalized) return [];
     const digest = createHash("sha256").update(normalized).digest("hex");
-    const cacheKey = `market-data:eodhd:search:v2:${digest}`;
+    const cacheKey = `market-data:eodhd:search:v3:${digest}`;
+    const identityKey = `market-data:eodhd:identities:${digest}`;
+    let identities: MarketCandidate[] = [];
+    const fallback = (message: string) => { onWarning?.(message); return identities; };
     try {
+      const savedIdentities = await this.cache.get(identityKey);
+      if (savedIdentities) identities = (JSON.parse(savedIdentities) as MarketCandidate[]).map((c) => ({ ...c, price: null, quotedAt: null }));
       const saved = await this.cache.get(cacheKey);
       if (saved) return JSON.parse(saved) as MarketCandidate[];
-    } catch {
-      return [];
-    }
+    } catch { /* Cache reads must not erase valid provider results. */ }
+    if (!this.config.EODHD_API_TOKEN) return fallback("Investment search is not configured on the server (EODHD_API_TOKEN). Previously saved matches remain available.");
     const day = new Date().toISOString().slice(0, 10);
     const budgetKey = `market-data:eodhd:budget:${day}`;
     try {
       const used = await this.cache.incr(budgetKey);
       if (used === 1) await this.cache.expire(budgetKey, 172800);
-      if (used > this.config.EODHD_DAILY_LIMIT) return [];
+      if (used > this.config.EODHD_DAILY_LIMIT) return fallback("The daily investment-search limit has been reached. Previously saved matches remain available.");
     } catch {
-      return [];
+      return fallback("Investment search is temporarily unavailable. Previously saved matches remain available.");
     }
     const url = new URL(
       `https://eodhd.com/api/search/${encodeURIComponent(normalized)}`,
     );
     url.searchParams.set("api_token", this.config.EODHD_API_TOKEN);
     url.searchParams.set("fmt", "json");
-    url.searchParams.set("limit", "8");
+    url.searchParams.set("limit", "20");
     let candidates: MarketCandidate[];
     try {
       const response = await this.transport(url, {
@@ -106,8 +110,16 @@ export class EODHDMarketData implements MarketDataProvider {
           : AbortSignal.timeout(10000),
         headers: { Accept: "application/json" },
       });
-      if (!response.ok) return [];
-      candidates = resultSchema.parse(await response.json()).map((row) => ({
+      if (!response.ok) return fallback(response.status === 429
+        ? "EODHD search quota reached. Previously saved matches remain available."
+        : response.status === 401 || response.status === 403
+          ? "EODHD rejected investment search. Check the server token and its Search API access."
+          : "EODHD investment search is temporarily unavailable. Previously saved matches remain available.");
+      const payload = await response.json();
+      if (!Array.isArray(payload)) return fallback("EODHD returned an unreadable search response.");
+      const rows = payload.flatMap((row) => { const parsed = resultSchema.element.safeParse(row); return parsed.success ? [parsed.data] : []; });
+      if (payload.length && !rows.length) return fallback("EODHD returned incomplete investment details. Previously saved matches remain available.");
+      candidates = rows.map((row) => ({
         providerKey: `${row.Code}.${row.Exchange}`,
         symbol: row.Code,
         exchange: row.Exchange,
@@ -125,10 +137,13 @@ export class EODHDMarketData implements MarketDataProvider {
         isPrimary: row.isPrimary ?? false,
       }));
     } catch {
-      return [];
+      return fallback("EODHD investment search could not be reached. Previously saved matches remain available.");
     }
     try {
-      await this.cache.setEx(cacheKey, 300, JSON.stringify(candidates));
+      if (candidates.length) {
+        await this.cache.setEx(cacheKey, 300, JSON.stringify(candidates));
+        await this.cache.setEx(identityKey, 604800, JSON.stringify(candidates.map((c) => ({ ...c, price: null, quotedAt: null }))));
+      }
     } catch {}
     return candidates;
   }

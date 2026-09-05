@@ -1,4 +1,5 @@
-import { beforeAll, afterAll, describe, it, expect } from "vitest";
+import { readFile } from "node:fs/promises";
+import { beforeAll, beforeEach, afterAll, describe, it, expect } from "vitest";
 import Fastify from "fastify";
 import { connectDatabase } from "../src/db/index.js";
 import { migrate } from "../src/db/migrate.js";
@@ -23,8 +24,9 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
     await migrate(url);
     db = connectDatabase(url);
   });
+  beforeEach(async () => { await db.sql`TRUNCATE import_instrument_memory`; });
   afterAll(async () => {
-    await db.sql`TRUNCATE import_sessions,accounts,assets CASCADE`;
+    await db.sql`TRUNCATE import_sessions,accounts,assets,import_instrument_memory CASCADE`;
     await db.close();
   });
   const candidate: MarketCandidate = {
@@ -164,6 +166,27 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
     expect(choices.choices).toEqual([]);
     expect(choices.message).toContain("Try a shorter name, ticker or ISIN");
     expect(result.blockers.length).toBeGreaterThan(0);
+  });
+  it("remembers an explicit confirmation across imports and provider outages without reusing prices", async () => {
+    const { service } = setup(null, true);
+    const created = await service.create();
+    const first = await service.extract(created.id, { bytes: Buffer.from("fixture"), mime: "image/png" });
+    const row = first.extraction!.positions[0]!;
+    await service.update(created.id, first.revision, { positions: [{ candidateId: row.candidateId!, symbol: "EUNL", isin: candidate.isin, name: candidate.name }] });
+    // Simulate the schema upgrade with existing confirmed edits, not just fresh storage.
+    await db.sql`DROP TABLE import_instrument_memory`;
+    await db.sql.unsafe(await readFile(new URL("../migrations/0010_import_instrument_memory.sql", import.meta.url), "utf8"));
+    const unavailable = setup(null, false, true).service;
+    const next = await unavailable.create();
+    const restored = await unavailable.extract(next.id, { bytes: Buffer.from("fixture"), mime: "image/png" });
+    expect(restored.blockers).toEqual([]);
+    expect(restored.extraction!.positions[0]).toMatchObject({ symbol: "EUNL", isin: candidate.isin, quantity: null, quotePrice: null });
+    const choices = await unavailable.matchingChoices(next.id, restored.extraction!.positions[0]!.candidateId!, "Core MSCI World USD (Acc)");
+    expect(choices.choices[0]).toMatchObject({ symbol: "EUNL", recommended: true, reason: "You confirmed this investment before." });
+    const differentClass = await unavailable.matchingChoices(next.id, restored.extraction!.positions[0]!.candidateId!, "Core MSCI World USD (Dist)");
+    expect(differentClass.choices).toEqual([]);
+    await expect(service.update(created.id, first.revision, { positions: [{ candidateId: row.candidateId!, symbol: "WRONG" }] })).rejects.toThrow();
+    expect((await unavailable.matchingChoices(next.id, restored.extraction!.positions[0]!.candidateId!, "Core MSCI World USD (Acc)")).choices[0]!.symbol).toBe("EUNL");
   });
   it("accepts uppercase iOS row IDs for both stocks and puts and keeps no-op edits estimated", async () => {
     const { service, model } = setup("125");

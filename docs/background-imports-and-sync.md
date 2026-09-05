@@ -56,3 +56,11 @@ References checked 2026-09-05: [Tokens By Wallet](https://www.alchemy.com/docs/d
 Continue reviews unresolved holdings one at a time. Ordinary holdings have separate investment-selection and value-review steps, with a persistent action and an explicit close action. Saving a resolved row advances to the next unresolved item; closing without saving returns to the holdings list. Financial changes still require Apply.
 
 `GET /api/v1/imports/:id/positions/:candidateId/matches?query=...` supports name, ticker, or ISIN searches for existing import rows, including rows with no stored candidates. It deduplicates listings by ISIN, ranks matches, and highlights a suggestion only above the matching threshold with a sufficient lead over alternatives. Suggestions are never silently selected or applied. Empty results offer search refinement and manual ticker entry instead of repeating an unresolvable Save loop. This feature requires both the backend and iOS update.
+
+## Remembered instruments and search availability
+
+Migration `0010_import_instrument_memory.sql` stores explicit user-confirmed label-to-instrument mappings and recovers earlier confirmations from import edit history. Later screenshots reuse these exact normalized labels and valuation currencies; share-class words remain significant. Only identifiers are retained, never quantities, prices, or image bytes. Revision conflicts do not update memory.
+
+EODHD search keeps fresh quotes for five minutes and identifier-only fallback results for seven days. Partial malformed provider rows do not erase valid choices, failed searches do not poison the cache with empty results, and missing configuration, permission errors, and quota limits return explicit search messages. The interactive search can retry a shorter label when the exact phrase returns no results. `EODHD_API_TOKEN` is required for new market search; `ALCHEMY_API_KEY` does not enable fund search.
+
+Deploy this backend change with the migration before restarting API and worker. No additional iOS change is needed when the guided search UI is already installed.
