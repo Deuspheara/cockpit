@@ -41,7 +41,9 @@ struct DerivativesSummaryView: View {
 }
 struct TradingPerformanceView: View {
   let performance: TradingPerformance
+  @MotionPreference private var reduceMotion
   @Binding var range: PortfolioRange
+  var displayedRange: PortfolioRange
   @State private var selectedDate: Date?
   private var selected: ValuationPoint? {
     guard let selectedDate else { return nil }
@@ -50,17 +52,25 @@ struct TradingPerformanceView: View {
     }
   }
   var body: some View {
+    let selected = self.selected
     VStack(alignment: .leading, spacing: 12) {
       Text(
         FinanceFormat.amount(
           selected?.value ?? performance.totalPnl, currency: performance.currency)
       )
-      .font(.largeTitle.bold()).monospacedDigit()
-      Text(
-        selected.map { ($0.sourceAt ?? $0.at).formatted(date: .abbreviated, time: .shortened) }
-          ?? "Cumulative trading PnL · dYdX"
-      )
+      .font(.largeTitle.bold()).monospacedDigit().lineLimit(1).minimumScaleFactor(0.7)
+      ZStack(alignment: .leading) {
+        Text("Cumulative trading PnL · dYdX")
+          .opacity(selected == nil ? 1 : 0).accessibilityHidden(selected != nil)
+        Text(
+          (selected?.sourceAt ?? selected?.at ?? performance.asOf).formatted(
+            date: .abbreviated, time: .shortened)
+        )
+        .opacity(selected == nil ? 0 : 1).accessibilityHidden(selected == nil)
+      }
       .font(.subheadline).foregroundStyle(.secondary)
+      .frame(minHeight: 44, alignment: .leading)
+      .animation(AppMotion.fade(reduceMotion), value: selected != nil)
       Chart(performance.chart) { point in
         LineMark(
           x: .value("Date", point.at),
@@ -77,6 +87,7 @@ struct TradingPerformanceView: View {
         }
       }.chartYScale(domain: .automatic(includesZero: false)).chartYAxis(.hidden)
         .chartXSelection(value: $selectedDate).frame(height: 200)
+        .modifier(DatasetTransition(key: displayedRange))
       ChartRangePicker(selection: $range)
       LabeledContent(
         "Net deposits at last record",

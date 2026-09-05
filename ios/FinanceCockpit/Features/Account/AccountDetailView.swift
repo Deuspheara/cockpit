@@ -3,7 +3,9 @@ import SwiftUI
 struct AccountDetailView: View {
   let accountID: UUID
   @Environment(AppEnvironment.self) private var environment
-  @State private var detail: AccountDetail?
+  @State private var snapshot = SnapshotLoader<AccountDetail>()
+  private var detail: AccountDetail? { snapshot.value }
+  @State private var firstHoldingPresented = false
   @State private var range: PortfolioRange = .month
   @State private var error: String?
   @State private var syncing = false
@@ -20,16 +22,26 @@ struct AccountDetailView: View {
               Text("Trading PnL").tag("PnL")
             }.pickerStyle(.segmented)
           }
-          if chartMetric == "PnL", let performance = detail.performance {
-            TradingPerformanceView(performance: performance, range: $range)
-          } else {
-            PortfolioValueChart(dashboard: detail.dashboard, range: $range)
-          }
+          Group {
+            if chartMetric == "PnL", let performance = detail.performance {
+              TradingPerformanceView(
+                performance: performance, range: $range, displayedRange: detail.dashboard.range)
+            } else {
+              PortfolioValueChart(dashboard: detail.dashboard, range: $range)
+            }
+          }.modifier(DatasetTransition(key: chartMetric))
           if let summary = detail.derivatives { DerivativesSummaryView(summary: summary) }
           if let historyError = detail.historyError {
             Text(historyError).font(.caption).foregroundStyle(.secondary)
           }
           Text("Positions").font(.headline)
+          if detail.account.sourceType == "manual", detail.positions.isEmpty {
+            Button(
+              detail.account.assetClass == "cash" ? "Add your balance" : "Add your first holding"
+            ) {
+              firstHoldingPresented = true
+            }.buttonStyle(.borderedProminent)
+          }
           ForEach(detail.positions.filter { $0.assetType != "cash" || detail.derivatives == nil }) {
             position in
             VStack(alignment: .leading, spacing: 5) {
@@ -113,7 +125,10 @@ struct AccountDetailView: View {
         } else if error == nil {
           ProgressView("Loading account").frame(maxWidth: .infinity, minHeight: 220)
         }
-        if let error { Text(error).foregroundStyle(.red) }
+        if let error = error ?? snapshot.error {
+          Text(error).foregroundStyle(.red)
+          Button("Retry") { Task { await load() } }
+        }
       }.padding(20)
     }.navigationTitle(detail?.account.name ?? "Account")
       .navigationBarTitleDisplayMode(.inline)
@@ -130,7 +145,14 @@ struct AccountDetailView: View {
           }
         }
       }
-      .task(id: "\(range)-\(scenePhase)") {
+      .sheet(isPresented: $firstHoldingPresented) {
+        if let account = detail?.account {
+          NavigationStack {
+            FirstHoldingView(account: account) { firstHoldingPresented = false }
+          }
+        }
+      }
+      .task(id: "\(range)-\(scenePhase)-\(environment.dataRevision)") {
         guard scenePhase == .active else { return }
         await load()
         while !Task.isCancelled {
@@ -152,17 +174,16 @@ struct AccountDetailView: View {
   }
   private func load() async {
     guard let api = environment.api else { return }
-    let key = "account-\(accountID)-\(range.rawValue)"
-    if detail == nil, let cached = await environment.cache?.read(key, as: AccountDetail.self) {
-      detail = cached
-    }
-    do {
-      let fresh: AccountDetail = try await api.send(
-        "accounts/\(accountID)/detail", query: [URLQueryItem(name: "range", value: range.rawValue)])
-      guard !Task.isCancelled else { return }
-      detail = fresh
-      error = nil
-      await environment.cache?.write(fresh, key: key)
-    } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+    let requestedRange = range
+    let key = "account-\(accountID)-\(requestedRange.rawValue)"
+    let id = accountID
+    await snapshot.load(
+      key: key,
+      cached: { await environment.cache?.read(key, as: AccountDetail.self) },
+      fetch: {
+        try await api.send(
+          "accounts/\(id)/detail",
+          query: [URLQueryItem(name: "range", value: requestedRange.rawValue)])
+      }, save: { await environment.cache?.write($0, key: key) })
   }
 }

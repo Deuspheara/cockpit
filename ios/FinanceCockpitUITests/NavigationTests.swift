@@ -79,7 +79,7 @@ final class NavigationTests: XCTestCase {
     self.add(capture)
     add.tap()
     XCTAssertTrue(app.buttons["Import screenshot"].waitForExistence(timeout: 5))
-    XCTAssertTrue(app.buttons["Add manually or connect account"].exists)
+    XCTAssertTrue(app.buttons["Add account"].exists)
   }
 
   func testConnectedDerivativesChartsAndLeverage() throws {

@@ -17,8 +17,8 @@ struct PortfolioAssetLine: Decodable, Identifiable, Sendable {
 struct PortfolioAssetsView: View {
   let scope: PortfolioScope
   @Environment(AppEnvironment.self) private var environment
-  @State private var lines: [PortfolioAssetLine] = []
-  @State private var error: String?
+  var snapshot: SnapshotLoader<[PortfolioAssetLine]>
+  private var lines: [PortfolioAssetLine] { snapshot.value ?? [] }
   var body: some View {
     VStack(alignment: .leading, spacing: 12) {
       ForEach(lines.sorted { $0.symbol < $1.symbol }) { line in
@@ -38,17 +38,24 @@ struct PortfolioAssetsView: View {
         Link("Logos provided by Logo.dev", destination: URL(string: "https://logo.dev")!)
           .font(.caption)
       }
-      if let error { Text(error).foregroundStyle(.red) }
+      if snapshot.value == nil && snapshot.isLoading {
+        ProgressView("Loading assets…").frame(maxWidth: .infinity, minHeight: 220)
+      }
+      if let error = snapshot.error { Text(error).foregroundStyle(.red) }
+      if snapshot.error != nil { Button("Retry") { Task { await load() } } }
     }.task(id: "\(scope.rawValue)-\(environment.dataRevision)") {
-      do {
-        let fresh: [PortfolioAssetLine] =
-          try await environment.api?.send(
-            "portfolio/assets", query: [URLQueryItem(name: "scope", value: scope.rawValue)]) ?? []
-        guard !Task.isCancelled else { return }
-        lines = fresh
-        error = nil
-      } catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+      await load()
     }
+  }
+  private func load() async {
+    guard let api = environment.api else { return }
+    let requestedScope = scope
+    await snapshot.load(
+      key: requestedScope.rawValue,
+      fetch: {
+        try await api.send(
+          "portfolio/assets", query: [URLQueryItem(name: "scope", value: requestedScope.rawValue)])
+      })
   }
 }
 

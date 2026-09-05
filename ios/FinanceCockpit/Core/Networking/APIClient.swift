@@ -60,11 +60,11 @@ private struct ErrorEnvelope: Decodable {
 actor APIClient {
   let configuration: APIConfiguration
   private let session: URLSession
-  init(configuration: APIConfiguration) {
+  init(configuration: APIConfiguration, session suppliedSession: URLSession? = nil) {
     self.configuration = configuration
     let settings = URLSessionConfiguration.ephemeral
     settings.urlCache = nil
-    session = URLSession(
+    session = suppliedSession ?? URLSession(
       configuration: settings, delegate: NoRedirectDelegate(), delegateQueue: nil)
   }
   static func decoder() -> JSONDecoder {

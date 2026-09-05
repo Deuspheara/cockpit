@@ -9,7 +9,9 @@ struct FinanceCockpitApp: App {
         if environment.api == nil { ConnectionView() } else { AppTabs() }
       }.environment(environment)
         #if DEBUG
+          .modifier(InteractionFixtureAppearance())
           .task {
+            guard !ProcessInfo.processInfo.arguments.contains("--ui-fixtures") else { return }
             let launch = ProcessInfo.processInfo.environment
             if let server = launch["FINANCE_DEVELOPMENT_SERVER"],
               let token = launch["FINANCE_DEVELOPMENT_TOKEN"]

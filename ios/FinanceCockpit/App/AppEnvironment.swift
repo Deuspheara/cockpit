@@ -28,6 +28,17 @@ final class AppEnvironment {
   }
   init() {
     serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
+    #if DEBUG
+      if ProcessInfo.processInfo.arguments.contains("--ui-fixtures") {
+        serverURL = "https://fixtures.invalid"
+        let configuration = try! APIConfiguration(
+          server: serverURL, token: String(repeating: "a", count: 43))
+        let settings = URLSessionConfiguration.ephemeral
+        settings.protocolClasses = [InteractionFixtureProtocol.self]
+        api = APIClient(configuration: configuration, session: URLSession(configuration: settings))
+        return
+      }
+    #endif
     do {
       if let token = try TokenKeychain.read(), !serverURL.isEmpty {
         let configuration = try APIConfiguration(server: serverURL, token: token)

@@ -1,21 +1,25 @@
 import SwiftUI
 
+enum ManualEntryMode: String, CaseIterable {
+  case asset = "Asset"
+  case transaction = "Transaction"
+  case observation = "Observation"
+  case recurring = "Recurring"
+}
+
 struct ManualEntryView: View {
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
-  @State private var mode = "Account"
+  @State private var mode: String
   @State private var name = ""
   @State private var symbol = ""
-  @State private var assetClass = "equities"
-  @State private var source = "manual"
-  @State private var publicAddress = ""
+  @State private var assetClass = "etf"
   @State private var accountID = ""
   @State private var assetID = ""
   @State private var quantity = ""
   @State private var price = ""
   @State private var fee = ""
   @State private var notes = ""
-  @State private var subaccount = 0
   @State private var cashAmount = ""
   @State private var currency = "EUR"
   @State private var transactionType = "BUY"
@@ -25,29 +29,19 @@ struct ManualEntryView: View {
   @State private var error: String?
   @State private var working = false
   @State private var reviewID: UUID?
+  init(initialMode: ManualEntryMode = .asset, account: Account? = nil) {
+    _mode = State(initialValue: initialMode.rawValue)
+    _accountID = State(initialValue: account?.id.uuidString ?? "")
+    _currency = State(initialValue: account?.baseCurrency ?? "EUR")
+  }
   var body: some View {
     Form {
       Picker("Add", selection: $mode) {
-        ForEach(["Account", "Asset", "Transaction", "Observation", "Recurring"], id: \.self) {
-          Text($0)
+        ForEach(ManualEntryMode.allCases, id: \.self) {
+          Text($0.rawValue).tag($0.rawValue)
         }
       }
-      if mode == "Account" {
-        TextField("Account name", text: $name)
-        Picker("Category", selection: $assetClass) {
-          ForEach(["equities", "crypto", "cash", "other"], id: \.self) { Text($0.capitalized) }
-        }
-        Picker("Source", selection: $source) {
-          ForEach(["manual", "hyperliquid", "dydx", "evm_wallet"], id: \.self) { Text($0) }
-        }
-        if source != "manual" {
-          TextField("Public address", text: $publicAddress).textInputAutocapitalization(.never)
-            .autocorrectionDisabled()
-          Text("Public address only. No wallet signature or trading credential.").font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        if source == "dydx" { Stepper("Subaccount \(subaccount)", value: $subaccount, in: 0...127) }
-      } else if mode == "Asset" {
+      if mode == "Asset" {
         TextField("Symbol", text: $symbol)
         TextField("Asset name", text: $name)
         Picker("Type", selection: $assetClass) {
@@ -94,14 +88,14 @@ struct ManualEntryView: View {
       if let error { Text(error).foregroundStyle(.red) }
       Button(
         working
-          ? "Preparing…" : (mode == "Account" || mode == "Asset" ? "Create" : "Review changes")
+          ? "Preparing…" : (mode == "Asset" ? "Create" : "Review changes")
       ) { Task { await submit() } }.disabled(working)
     }
     .navigationTitle("Add to portfolio")
     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Close") { dismiss() } } }
     .task { await loadOptions() }
     .onChange(of: mode) { _, new in
-      if new == "Asset" { assetClass = "etf" } else if new == "Account" { assetClass = "equities" }
+      if new == "Asset" { assetClass = "etf" }
     }
     .navigationDestination(item: $reviewID) { ChangeSetReview(changeSetID: $0) }
   }
@@ -123,23 +117,11 @@ struct ManualEntryView: View {
     return .string(normalized)
   }
   private func submit() async {
-    guard let api = environment.api else { return }
+    guard let api = environment.api, !working else { return }
     working = true
     error = nil
     defer { working = false }
     do {
-      if mode == "Account" {
-        var body: [String: JSONValue] = [
-          "name": .string(name), "assetClass": .string(assetClass), "sourceType": .string(source),
-          "baseCurrency": .string(currency.uppercased()),
-        ]
-        if source != "manual" { body["externalAddress"] = .string(publicAddress) }
-        if source == "dydx" { body["externalSubaccount"] = .number(Decimal(subaccount)) }
-        let _: Account = try await api.send("accounts", method: "POST", body: body)
-        environment.dataRevision += 1
-        dismiss()
-        return
-      }
       if mode == "Asset" {
         let _: Asset = try await api.send(
           "assets", method: "POST",

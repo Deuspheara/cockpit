@@ -92,6 +92,7 @@ extension ActivityEvent {
 }
 
 struct ActivityView: View {
+  @MotionPreference private var reduceMotion
   @Environment(AppEnvironment.self) private var environment
   @State private var activity: [ActivityEvent]
   @State private var accounts: [Account]
@@ -167,6 +168,7 @@ struct ActivityView: View {
         }
       }
     }
+    .animation(AppMotion.selection(reduceMotion), value: "\(accountID)-\(assetClass)-\(source)")
     .listStyle(.insetGrouped)
     .navigationTitle("Activity")
     .searchable(text: $searchText, prompt: "Search activity")

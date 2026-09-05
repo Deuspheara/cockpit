@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ChangeSetReview: View {
   let changeSetID: UUID
+  var onApplied: (() -> Void)? = nil
+  var holdingSummary: String? = nil
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
   @State private var change: ChangeSet?
@@ -30,23 +32,13 @@ struct ChangeSetReview: View {
             ).font(.caption).foregroundStyle(.secondary)
           }
         }
-        ForEach(change.operations) { operation in
-          Section(operation.table.replacingOccurrences(of: "_", with: " ").capitalized) {
-            ForEach(
-              Array(Set((operation.before ?? [:]).keys).union((operation.after ?? [:]).keys))
-                .sorted(), id: \.self
-            ) { key in
-              let before = operation.before?[key]
-              let after = operation.after?[key]
-              if before != after {
-                VStack(alignment: .leading, spacing: 4) {
-                  Text(key).font(.caption).foregroundStyle(.secondary)
-                  if let before { Text("Before: \(label(before, change: change))") }
-                  if let after { Text("After: \(label(after, change: change))") }
-                }.textSelection(.enabled)
-              }
-            }
+        if let holdingSummary {
+          Section("Your holding") { Text(holdingSummary) }
+          DisclosureGroup("Record details") {
+            operationDetails(change)
           }
+        } else {
+          operationDetails(change)
         }
         Section {
           if change.status == "draft" {
@@ -75,6 +67,30 @@ struct ChangeSetReview: View {
         }
       }
   }
+  private func operationDetails(_ change: ChangeSet) -> some View {
+    ForEach(change.operations) { operation in
+      Section(operation.table.replacingOccurrences(of: "_", with: " ").capitalized) {
+        ForEach(
+          Array(Set((operation.before ?? [:]).keys).union((operation.after ?? [:]).keys))
+            .sorted(), id: \.self
+        ) { key in
+          let before = operation.before?[key]
+          let after = operation.after?[key]
+          if before != after {
+            VStack(alignment: .leading, spacing: 4) {
+              Text(
+                key.replacingOccurrences(
+                  of: "([a-z])([A-Z])", with: "$1 $2", options: .regularExpression
+                ).capitalized
+              ).font(.caption).foregroundStyle(.secondary)
+              if let before { Text("Before: \(label(before, change: change))") }
+              if let after { Text("After: \(label(after, change: change))") }
+            }.textSelection(.enabled)
+          }
+        }
+      }
+    }
+  }
   private func label(_ value: JSONValue, change: ChangeSet) -> String {
     if case .string(let id) = value, let name = change.labels?[id.lowercased()] { return name }
     return value.display
@@ -86,6 +102,7 @@ struct ChangeSetReview: View {
       change = try await environment.api?.send(
         "change-sets/\(changeSetID)/\(action)", method: "POST")
       environment.dataRevision += 1
+      if action == "apply", change?.status == "applied" { onApplied?() }
     } catch { self.error = error.localizedDescription }
   }
 }

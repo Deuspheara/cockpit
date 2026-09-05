@@ -5,18 +5,20 @@ struct PortfolioView: View {
   @Environment(\.scenePhase) private var scenePhase
   @State private var model = PortfolioModel()
   @State private var showAssets = false
+  @State private var assetSnapshot = SnapshotLoader<[PortfolioAssetLine]>()
   @State private var assistantPresented = false
+  @State private var openedAccount: UUID?
   @State private var sheet: PortfolioSheet?
 
   enum PortfolioSheet: String, Identifiable {
-    case add, screenshots
+    case add, manual, screenshots
     var id: String { rawValue }
   }
 
   init(dashboard: PortfolioDashboard? = nil, error: String? = nil) {
     let previewModel = PortfolioModel()
     previewModel.dashboard = dashboard
-    previewModel.error = error
+    previewModel.previewError = error
     _model = State(initialValue: previewModel)
   }
 
@@ -29,16 +31,6 @@ struct PortfolioView: View {
             emptyState
           } else {
             PortfolioValueChart(dashboard: dashboard, range: $model.range)
-            if model.isCached || model.error != nil {
-              HStack(spacing: 6) {
-                AppIcon(name: .clock, size: 15)
-                Text(
-                  "Saved data · \(dashboard.asOf.formatted(date: .abbreviated, time: .shortened))"
-                )
-              }
-              .font(.caption)
-              .foregroundStyle(.secondary)
-            }
             allocation(dashboard)
             Picker("View", selection: $showAssets) {
               Text("Accounts").tag(false)
@@ -46,11 +38,13 @@ struct PortfolioView: View {
             }
             .pickerStyle(.segmented)
             .accessibilityIdentifier("portfolio-content-picker")
-            if showAssets {
-              PortfolioAssetsView(scope: model.scope)
-            } else {
-              accountList(dashboard)
-            }
+            Group {
+              if showAssets {
+                PortfolioAssetsView(scope: model.scope, snapshot: assetSnapshot)
+              } else {
+                accountList(dashboard)
+              }
+            }.modifier(DatasetTransition(key: showAssets))
           }
         } else if model.isRefreshing {
           ProgressView("Loading portfolio").frame(maxWidth: .infinity, minHeight: 220)
@@ -63,6 +57,7 @@ struct PortfolioView: View {
       .padding(.horizontal, 20)
       .padding(.bottom, 24)
     }
+    .navigationDestination(item: $openedAccount) { AccountDetailView(accountID: $0) }
     .navigationTitle("Portfolio")
     .toolbar {
       ToolbarItem(placement: .topBarTrailing) {
@@ -79,7 +74,8 @@ struct PortfolioView: View {
           .accessibilityIdentifier("portfolio-assistant")
           Menu {
             Button("Import screenshot") { sheet = .screenshots }
-            Button("Add manually or connect account") { sheet = .add }
+            Button("Add account") { sheet = .add }
+            Button("Add manually") { sheet = .manual }
           } label: {
             AppIcon(name: .add, size: 21)
               .frame(width: 44, height: 44)
@@ -90,11 +86,6 @@ struct PortfolioView: View {
         }
         .buttonStyle(.plain)
         .fixedSize()
-      }
-      if model.isRefreshing && model.dashboard != nil {
-        ToolbarItem(placement: .topBarLeading) {
-          ProgressView().accessibilityLabel("Refreshing")
-        }
       }
     }
     .task(id: "\(model.key)-\(environment.dataRevision)-\(scenePhase)") {
@@ -111,11 +102,14 @@ struct PortfolioView: View {
       NavigationStack { AgentView() }
     }
     .sheet(item: $sheet) { item in
-      NavigationStack {
-        switch item {
-        case .add: ManualEntryView()
-        case .screenshots: ImportView()
+      switch item {
+      case .add:
+        AccountSetupView { account in
+          sheet = nil
+          openedAccount = account.id
         }
+      case .manual: NavigationStack { ManualEntryView(initialMode: .asset) }
+      case .screenshots: NavigationStack { ImportView() }
       }
     }
   }

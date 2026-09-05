@@ -5,43 +5,31 @@ import Observation
 final class PortfolioModel {
   var scope: PortfolioScope = .global
   var range: PortfolioRange = .month
-  var dashboard: PortfolioDashboard?
-  var isRefreshing = false
-  var isCached = false
-  var error: String?
-  private var requestID = UUID()
+  let snapshot = SnapshotLoader<PortfolioDashboard>()
+  var dashboard: PortfolioDashboard? {
+    get { snapshot.value }
+    set { snapshot.value = newValue }
+  }
+  var isRefreshing: Bool { snapshot.isLoading }
+  var isCached: Bool { snapshot.isCached }
+  var error: String? { snapshot.error ?? previewError }
+  var previewError: String?
   var key: String { "portfolio-\(scope.rawValue)-\(range.rawValue)" }
   func load(api: APIClient, cache: AppCache?) async {
-    let identity = UUID()
-    requestID = identity
     let key = self.key
     let scope = self.scope
     let range = self.range
-    isRefreshing = true
-    error = nil
-    if dashboard?.scope != scope || dashboard?.range != range { dashboard = nil }
-    if dashboard == nil, let cached = await cache?.read(key, as: PortfolioDashboard.self),
-      requestID == identity
-    {
-      dashboard = cached
-      isCached = true
-    }
-    do {
-      let fresh: PortfolioDashboard = try await api.send(
-        "portfolio/dashboard",
-        query: [
-          URLQueryItem(name: "scope", value: scope.rawValue),
-          URLQueryItem(name: "range", value: range.rawValue),
-        ])
-      guard !Task.isCancelled, requestID == identity else { return }
-      dashboard = fresh
-      isCached = false
-      isRefreshing = false
-      await cache?.write(fresh, key: key)
-    } catch {
-      guard requestID == identity else { return }
-      isRefreshing = false
-      if !Task.isCancelled { self.error = error.localizedDescription }
-    }
+    await snapshot.load(
+      key: key,
+      cached: { await cache?.read(key, as: PortfolioDashboard.self) },
+      fetch: {
+        try await api.send(
+          "portfolio/dashboard",
+          query: [
+            URLQueryItem(name: "scope", value: scope.rawValue),
+            URLQueryItem(name: "range", value: range.rawValue),
+          ])
+      },
+      save: { await cache?.write($0, key: key) })
   }
 }

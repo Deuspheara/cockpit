@@ -14,6 +14,7 @@ struct AgentConversation: Decodable, Sendable {
 }
 
 struct AgentView: View {
+  @MotionPreference private var reduceMotion
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
   @FocusState private var composerFocused: Bool
@@ -107,7 +108,7 @@ struct AgentView: View {
       .scrollDismissesKeyboard(.interactively)
       .onChange(of: messages.count) {
         if let last = messages.last {
-          withAnimation { scroll.scrollTo(last.id, anchor: .bottom) }
+          withAnimation(AppMotion.selection(reduceMotion)) { scroll.scrollTo(last.id, anchor: .bottom) }
         }
       }
       .safeAreaInset(edge: .bottom, spacing: 0) {
