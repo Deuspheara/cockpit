@@ -187,3 +187,52 @@ describe("EODHD enrichment safeguards", () => {
     expect(await failed.search("IWDA")).toEqual([]);
   });
 });
+
+describe("explicit derivative label recovery", () => {
+  it("moves a misclassified put into derivatives without inventing contract quantity", () => {
+    const extraction = normalizeExtraction(
+      extractionSchema.parse({
+        positions: [
+          {
+            symbol: "AAPL",
+            name: "Apple Put 195 USD 2026-12-18",
+            unitPrice: "250",
+            marketValue: "35",
+            currency: "USD",
+            confidence: 0.9,
+          },
+        ],
+      }),
+    );
+    expect(extraction.positions).toHaveLength(0);
+    expect(extraction.derivatives[0]).toMatchObject({
+      optionType: "put",
+      underlyingSymbol: "AAPL",
+      strike: "195",
+      expiration: "2026-12-18",
+      quantity: null,
+      marketValue: "35",
+    });
+  });
+  it("retains incomplete puts for review and leaves put strategy funds as funds", () => {
+    const extraction = normalizeExtraction(
+      extractionSchema.parse({
+        positions: [
+          { name: "Put 195 USD", marketValue: "35", confidence: 0.9 },
+          {
+            name: "Put Strategy ETF",
+            symbol: "ETF",
+            marketValue: "100",
+            confidence: 0.9,
+          },
+        ],
+      }),
+    );
+    expect(extraction.derivatives[0]).toMatchObject({
+      optionType: "put",
+      underlyingSymbol: null,
+      expiration: null,
+    });
+    expect(extraction.positions).toHaveLength(1);
+  });
+});

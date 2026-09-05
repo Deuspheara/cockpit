@@ -41,16 +41,18 @@ export async function registerImportRoutes(
   app.post("/api/v1/imports", (request) => {
     const body = z
       .object({
-        accountId: z.uuid().optional(),
-        conversationId: z.uuid().optional(),
-        requestId: z.uuid().optional(),
+        accountId: z.uuid().toLowerCase().optional(),
+        conversationId: z.uuid().toLowerCase().optional(),
+        requestId: z.uuid().toLowerCase().optional(),
       })
       .strict()
       .parse(request.body ?? {});
     return imports.create(body.accountId, body.conversationId, body.requestId);
   });
   const jobParams = (params: unknown) =>
-    z.object({ id: z.uuid(), jobId: z.uuid() }).parse(params);
+    z
+      .object({ id: z.uuid().toLowerCase(), jobId: z.uuid().toLowerCase() })
+      .parse(params);
   app.get("/api/v1/imports/:id/jobs/:jobId", (request) => {
     const p = jobParams(request.params);
     return jobs.get(p.id, p.jobId);
@@ -68,7 +70,7 @@ export async function registerImportRoutes(
       try {
         const query = z
           .object({
-            requestId: z.uuid(),
+            requestId: z.uuid().toLowerCase(),
             revision: z.coerce.number().int().nonnegative(),
           })
           .strict()
@@ -171,14 +173,14 @@ export async function registerImportRoutes(
     const body = z
       .object({
         revision: z.number().int().nonnegative(),
-        accountId: z.uuid().nullable().optional(),
+        accountId: z.uuid().toLowerCase().nullable().optional(),
         likelyAccountName: editableText.optional(),
         capturedAt: z.iso.datetime({ offset: true }).optional(),
         positions: z
           .array(
             z
               .object({
-                candidateId: z.uuid(),
+                candidateId: z.uuid().toLowerCase(),
                 symbol: editableText.optional(),
                 name: editableText.optional(),
                 isin: editableText.optional(),
@@ -194,7 +196,7 @@ export async function registerImportRoutes(
           .array(
             z
               .object({
-                candidateId: z.uuid(),
+                candidateId: z.uuid().toLowerCase(),
                 underlyingSymbol: editableText.optional(),
                 name: editableText.optional(),
                 optionType: z.enum(["call", "put"]).nullable().optional(),

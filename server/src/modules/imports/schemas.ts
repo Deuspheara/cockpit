@@ -20,6 +20,7 @@ export const extractionSchema = z
             isin: text,
             quantity: amount,
             unitPrice: amount,
+            unitPriceCurrency: currency.nullable().default(null),
             marketValue: amount,
             averageCost: amount,
             performancePercent: amount,
@@ -101,7 +102,59 @@ export const extractionSchema = z
   })
   .strict();
 export type ImportExtraction = z.infer<typeof extractionSchema>;
+// Recover explicit option labels if vision placed them in the stock list.
+// Unknown underlying/expiry stay unknown; never price an option using its stock.
+export function classifyDerivativeRows(e: ImportExtraction): ImportExtraction {
+  const positions: ImportExtraction["positions"] = [];
+  const derivatives = [...e.derivatives];
+  for (const p of e.positions) {
+    const label = [p.name, p.symbol].filter(Boolean).join(" ");
+    const type = /\b(put|call)\b/i.exec(label)?.[1]?.toLowerCase();
+    if (!type || /\b(etf|fund)\b/i.test(label)) {
+      positions.push(p);
+      continue;
+    }
+    const strike =
+      /\b(?:put|call)\s+(\d+(?:[.,]\d+)?)(?=\s|$)/i
+        .exec(label)?.[1]
+        ?.replace(",", ".") ?? null;
+    const dateText = /\b(20\d{2}-\d{2}-\d{2})\b/.exec(label)?.[1];
+    const expiration = z.iso.date().safeParse(dateText).success
+      ? dateText!
+      : null;
+    derivatives.push(
+      extractionSchema.parse({
+        derivatives: [
+          {
+            candidateId: p.candidateId,
+            name: p.name ?? p.symbol,
+            optionType: type,
+            underlyingSymbol:
+              p.symbol &&
+              /^[A-Z][A-Z0-9.]{0,11}$/.test(p.symbol) &&
+              !/^(PUT|CALL)$/.test(p.symbol) &&
+              !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(p.symbol)
+                ? p.symbol
+                : null,
+            strike,
+            expiration,
+            quantity: p.quantity,
+            marketValue: p.marketValue,
+            currency: p.currency ?? e.currency,
+            confidence: p.confidence,
+            evidence: p.evidence,
+            quantitySource: p.quantitySource,
+            sourceLines: p.sourceLines,
+            sourceCandidateIds: p.sourceCandidateIds,
+          },
+        ],
+      }).derivatives[0]!,
+    );
+  }
+  return { ...e, positions, derivatives };
+}
 export function normalizeExtraction(e: ImportExtraction): ImportExtraction {
+  e = classifyDerivativeRows(e);
   return extractionSchema.parse({
     ...e,
     positions: e.positions.map((position) => {

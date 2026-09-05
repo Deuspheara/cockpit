@@ -76,7 +76,7 @@ export class EODHDMarketData implements MarketDataProvider {
     const normalized = query.trim().toLowerCase().replace(/\s+/g, " ");
     if (!normalized) return [];
     const digest = createHash("sha256").update(normalized).digest("hex");
-    const cacheKey = `market-data:eodhd:search:${digest}`;
+    const cacheKey = `market-data:eodhd:search:v2:${digest}`;
     try {
       const saved = await this.cache.get(cacheKey);
       if (saved) return JSON.parse(saved) as MarketCandidate[];
@@ -120,7 +120,7 @@ export class EODHDMarketData implements MarketDataProvider {
             ? null
             : String(row.previousClose),
         quotedAt: row.previousCloseDate
-          ? `${row.previousCloseDate}T00:00:00.000Z`
+          ? `${row.previousCloseDate.slice(0, 10)}T00:00:00.000Z`
           : null,
         isPrimary: row.isPrimary ?? false,
       }));
@@ -128,7 +128,7 @@ export class EODHDMarketData implements MarketDataProvider {
       return [];
     }
     try {
-      await this.cache.setEx(cacheKey, 30 * 86400, JSON.stringify(candidates));
+      await this.cache.setEx(cacheKey, 300, JSON.stringify(candidates));
     } catch {}
     return candidates;
   }

@@ -247,3 +247,17 @@ struct AccountSetupTests {
     #expect(ImportStage.allCases.map(\.title) == ["Upload & Analysis", "Account & Date", "Holdings", "Confirm", "Complete"])
   }
 }
+
+
+struct ImportCorrectionTests {
+  @Test func unchangedEstimatedQuantityIsNotSubmittedAsUserInput() throws {
+    let position = try APIClient.decoder().decode(ImportSessionDTO.Extraction.Candidate.self, from: Data(#"{"candidateId":"abcdefab-1234-4123-8123-abcdefabcdef","symbol":"EUNL","name":"Core MSCI World USD (Acc)","quantity":"25","marketValue":"2500","currency":"EUR","confidence":1,"matchStatus":"matched","quantitySource":"estimated","sourceLines":1,"sourceCandidateIds":[]}"#.utf8))
+    let unchanged = position.correction(name: position.name!, symbol: "EUNL", quantity: "25", value: "2500", currency: "EUR")
+    #expect(unchanged == ["candidateId": .string("abcdefab-1234-4123-8123-abcdefabcdef")])
+    let valueChanged = position.correction(name: position.name!, symbol: "EUNL", quantity: "25", value: "1250", currency: "EUR")
+    #expect(valueChanged["quantity"] == nil)
+    #expect(valueChanged["marketValue"] == .string("1250"))
+    let manual = position.correction(name: position.name!, symbol: "EUNL", quantity: "12,5", value: "1250", currency: "EUR")
+    #expect(manual["quantity"] == .string("12.5"))
+  }
+}

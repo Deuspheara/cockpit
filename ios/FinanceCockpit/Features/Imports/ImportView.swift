@@ -123,7 +123,7 @@ struct ImportView: View {
       }
       stageContent
       if let warnings = session?.warnings, !warnings.isEmpty {
-        Section(stage == .complete ? "Import notes" : "Warnings · review before applying") {
+        Section("Import notes") {
           ForEach(warnings, id: \.self) { Text($0).font(.callout).foregroundStyle(.secondary) }
         }
       }
@@ -210,7 +210,12 @@ struct ImportView: View {
       }
     case .holdings:
       holdingSections
-      if !blockers.isEmpty { Section("Needs attention") { ForEach(blockers, id: \.self) { Text($0).foregroundStyle(.orange) } } }
+      if !blockers.isEmpty {
+        Section {
+          Text("A few details will help finish this import. Continue opens the next item to check.")
+            .font(.callout).foregroundStyle(.secondary)
+        }
+      }
     case .confirm:
       Section("Account") { Text(accounts.first(where: { $0.id == destinationID })?.name ?? accountName); Text(observedAt, style: .date) }
       holdingSections
@@ -227,9 +232,11 @@ struct ImportView: View {
   }
   @ViewBuilder private var holdingSections: some View {
     if let extraction = session?.extraction {
-      Section("Needs attention") {
+      if extraction.positions.contains(where: needsAttention) || extraction.derivatives.contains(where: derivativeNeedsAttention) {
+      Section("A quick check") {
         ForEach(extraction.positions.filter(needsAttention), id: \.candidateId) { positionRow($0) }
         ForEach(extraction.derivatives.filter(derivativeNeedsAttention), id: \.candidateId) { derivativeRow($0) }
+      }
       }
       Section("Holdings") { ForEach(extraction.positions.filter { !needsAttention($0) }, id: \.candidateId) { positionRow($0) } }
       Section("Derivatives") { ForEach(extraction.derivatives.filter { !derivativeNeedsAttention($0) }, id: \.candidateId) { derivativeRow($0) } }
@@ -246,7 +253,7 @@ struct ImportView: View {
       VStack(alignment: .leading, spacing: 5) {
         Text(p.name ?? p.symbol ?? "Unknown instrument").font(.headline)
         Text(p.marketValue.map { FinanceFormat.amount($0, currency: p.currency ?? "EUR") } ?? "Value unknown")
-        Text(p.quantitySource == "estimated" ? "Estimated quantity · tap to review" : "Tap to review or correct").font(.caption).foregroundStyle(.secondary)
+        Text(needsAttention(p) ? "Confirm investment details" : p.quantitySource == "estimated" ? "Quantity estimated automatically" : p.quantity == nil ? "Position value saved · quantity optional" : "Tap to view details").font(.caption).foregroundStyle(.secondary)
       }.padding(.vertical, 4)
     }.buttonStyle(.plain).disabled(change != nil)
   }
