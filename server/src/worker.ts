@@ -28,6 +28,7 @@ for (const signal of ["SIGINT", "SIGTERM"])
 while (!stopping) {
   try {
     await database.sql`INSERT INTO worker_heartbeat(id,seen_at) VALUES(1,now()) ON CONFLICT(id) DO UPDATE SET seen_at=excluded.seen_at`;
+    await sync.runQueued();
     await bots.runDue();
     const day = new Date().toISOString().slice(0, 10);
     if (lastFXDay !== day && Date.now() >= nextFXAttempt) {

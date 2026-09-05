@@ -162,6 +162,11 @@ struct AccountDetailView: View {
           await load()
         }
       }
+      .safeAreaInset(edge: .bottom) {
+        if let account = detail?.account, account.sourceType != "manual" {
+          AccountSyncStatusView(accountID: accountID).padding().background(.bar)
+        }
+      }
       .refreshable { await load() }
   }
   private func sync() async {
@@ -169,7 +174,7 @@ struct AccountDetailView: View {
     defer { syncing = false }
     do {
       let _: JSONValue? = try await environment.api?.send(
-        "accounts/\(accountID)/sync", method: "POST")
+        "accounts/\(accountID)/sync-runs", method: "POST")
       await load()
       environment.dataRevision += 1
     } catch { self.error = error.localizedDescription }
@@ -187,5 +192,47 @@ struct AccountDetailView: View {
           "accounts/\(id)/detail",
           query: [URLQueryItem(name: "range", value: requestedRange.rawValue)])
       }, save: { await environment.cache?.write($0, key: key) })
+  }
+}
+
+struct AccountSyncStatusView: View {
+  let accountID: UUID
+  @Environment(AppEnvironment.self) private var environment
+  @Environment(\.scenePhase) private var scenePhase
+  @State private var run: AccountSyncResult?
+  @State private var error: String?
+  @State private var retrying = false
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      if let run {
+        if run.status == "queued" || run.status == "running" { ProgressView("\(run.provider == "alchemy" ? "Alchemy" : "Account") sync \(run.status)…") }
+        if let failure = run.failure { Text(failure.message).foregroundStyle(.orange) }
+        ForEach(run.warnings ?? [], id: \.self) { Text($0).font(.caption).foregroundStyle(.orange) }
+        if run.status == "failed" || run.status == "partial" {
+          Button("Retry sync") { Task { await retry() } }.disabled(retrying)
+        }
+      }
+      if let error { Text(error).font(.caption).foregroundStyle(.orange); Button("Retry") { Task { await retry() } }.disabled(retrying) }
+    }
+    .task(id: scenePhase) {
+      guard scenePhase == .active else { return }
+      while !Task.isCancelled {
+        do {
+          let previous = run?.status
+          if let api = environment.api {
+            let latest: AccountSyncResult? = try await api.send("accounts/\(accountID)/sync-runs")
+            run = latest
+          }
+          if previous != run?.status && (run?.status == "success" || run?.status == "partial") { environment.dataRevision += 1 }
+          try await Task.sleep(for: .seconds(3))
+        } catch { if !Task.isCancelled { self.error = error.localizedDescription }; return }
+      }
+    }
+  }
+  private func retry() async {
+    retrying = true
+    defer { retrying = false }
+    do { run = try await environment.api?.send("accounts/\(accountID)/sync-runs", method: "POST"); error = nil }
+    catch { self.error = error.localizedDescription }
   }
 }

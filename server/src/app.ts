@@ -150,11 +150,12 @@ export async function createApp(
     };
   });
   await registerFinanceRoutes(app, database, cache, config);
-  await registerImportRoutes(app, database, cache, config);
+  const importJobs = await registerImportRoutes(app, database, cache, config);
   const agentRuns = registerAgentRoutes(app, database, config);
   registerBotRoutes(app, database);
   app.addHook("preClose", () => agentRuns.close());
   app.addHook("onClose", async () => {
+    await importJobs.close();
     await agentRuns.close();
     if (cache.isOpen) cache.destroy();
     await database.close();

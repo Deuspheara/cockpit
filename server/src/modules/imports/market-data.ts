@@ -35,7 +35,7 @@ export interface MarketCandidate {
 }
 
 export interface MarketDataProvider {
-  search(query: string): Promise<MarketCandidate[]>;
+  search(query: string, signal?: AbortSignal): Promise<MarketCandidate[]>;
 }
 
 export function isEligiblePreviousClose(
@@ -68,7 +68,10 @@ export class EODHDMarketData implements MarketDataProvider {
     private transport: typeof fetch = fetch,
   ) {}
 
-  async search(query: string): Promise<MarketCandidate[]> {
+  async search(
+    query: string,
+    signal?: AbortSignal,
+  ): Promise<MarketCandidate[]> {
     if (!this.config.EODHD_API_TOKEN) return [];
     const normalized = query.trim().toLowerCase().replace(/\s+/g, " ");
     if (!normalized) return [];
@@ -98,7 +101,9 @@ export class EODHDMarketData implements MarketDataProvider {
     let candidates: MarketCandidate[];
     try {
       const response = await this.transport(url, {
-        signal: AbortSignal.timeout(10000),
+        signal: signal
+          ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+          : AbortSignal.timeout(10000),
         headers: { Accept: "application/json" },
       });
       if (!response.ok) return [];

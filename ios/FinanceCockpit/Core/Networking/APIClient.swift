@@ -4,6 +4,14 @@ struct APIError: LocalizedError, Sendable {
   let message: String
   var code: String? = nil
   var retryable: Bool = true
+  enum Category: Sendable { case connectivity, server, ai, eodhd, alchemy, gateway }
+  var category: Category {
+    if code == "CONNECTIVITY" { return .connectivity }
+    if code?.hasPrefix("AI_") == true || message.contains("OpenRouter") { return .ai }
+    if code?.hasPrefix("EODHD") == true { return .eodhd }
+    if code?.hasPrefix("ALCHEMY") == true { return .alchemy }
+    return code == "GATEWAY" ? .gateway : .server
+  }
   var errorDescription: String? { message }
 }
 struct APIConfiguration: Sendable {
@@ -111,6 +119,19 @@ actor APIClient {
       "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
     return try await perform(request)
   }
+  func uploadImportJob(id: UUID, revision: Int, requestID: UUID, images: [(Data, String)]) async throws -> ImportJobDTO {
+    let boundary = "Finance-" + UUID().uuidString
+    var body = Data()
+    for (data, mime) in images {
+      body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"screenshot\"; filename=\"screenshot\"\r\nContent-Type: \(mime)\r\n\r\n".utf8))
+      body.append(data)
+      body.append(Data("\r\n".utf8))
+    }
+    body.append(Data("--\(boundary)--\r\n".utf8))
+    var request = try configuration.request(path: "imports/\(id)/jobs", query: [URLQueryItem(name: "requestId", value: requestID.uuidString), URLQueryItem(name: "revision", value: String(revision))], method: "POST", body: body)
+    request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+    return try await perform(request)
+  }
   static func failure(_ data: Data, status: Int) -> APIError {
     if let detail = try? JSONDecoder().decode(ErrorEnvelope.self, from: data).error {
       return APIError(
@@ -124,10 +145,10 @@ actor APIClient {
     case 408, 504:
       message = "The server took too long to respond. Reconnect to recover saved progress."
     case 502, 503:
-      message = "The server or its AI provider is unavailable. Reconnect to recover saved progress."
+      message = "The server gateway is unavailable. Retry to recover saved progress."
     default: message = "The request could not be completed. Please try again."
     }
-    return APIError(message: message)
+    return APIError(message: message, code: "GATEWAY")
   }
   func stream(
     _ path: String, method: String = "GET", body: [String: JSONValue]? = nil,
@@ -161,7 +182,13 @@ actor APIClient {
     }
   }
   private func perform<T: Decodable & Sendable>(_ request: URLRequest) async throws -> T {
-    let (responseData, response) = try await session.data(for: request)
+    let responseData: Data
+    let response: URLResponse
+    do { (responseData, response) = try await session.data(for: request) }
+    catch let error as URLError {
+      if error.code == .cancelled { throw CancellationError() }
+      throw APIError(message: error.code == .notConnectedToInternet ? "You are offline. Reconnect to restore saved progress." : "Cannot reach your server. Check your connection and retry.", code: "CONNECTIVITY")
+    }
     guard let http = response as? HTTPURLResponse else {
       throw APIError(message: "No response from server.")
     }

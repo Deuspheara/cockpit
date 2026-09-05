@@ -164,3 +164,51 @@ import XCTest
     XCTAssertTrue(app.navigationBars["Hyperliquid"].waitForExistence(timeout: 5))
   }
 }
+
+@MainActor final class ScreenshotWizardTests: XCTestCase {
+  func testReviewEditBackApplyUndoWithLargeText() {
+    let app = XCUIApplication()
+    app.launchArguments = ["--ui-fixtures", "--fresh-import", "--large-text"]
+    app.launch()
+    XCTAssertTrue(app.buttons["Add"].waitForExistence(timeout: 15))
+    app.buttons["Add"].tap()
+    app.buttons["Import screenshot"].tap()
+    XCTAssertTrue(app.staticTexts["Upload & Analysis"].waitForExistence(timeout: 8))
+    app.buttons["Use sample screenshots"].tap()
+    XCTAssertTrue(app.staticTexts["Account & Date"].waitForExistence(timeout: 10))
+    app.buttons["Continue"].tap()
+    XCTAssertTrue(app.staticTexts["Holdings"].waitForExistence(timeout: 5))
+    app.buttons.containing(.staticText, identifier: "Apple").firstMatch.tap()
+    XCTAssertTrue(app.textFields["import-quantity"].waitForExistence(timeout: 5))
+    app.swipeUp()
+    app.buttons["Save correction"].tap()
+    XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
+    app.buttons["Continue"].tap()
+    XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 5))
+    app.buttons["Back"].tap()
+    XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
+    app.buttons["Continue"].tap()
+    app.buttons["Apply"].tap()
+    XCTAssertTrue(app.buttons["Open Account"].waitForExistence(timeout: 5))
+    app.buttons["Undo"].tap()
+    XCTAssertTrue(app.staticTexts["Import undone"].waitForExistence(timeout: 5))
+    let capture = XCTAttachment(screenshot: app.screenshot())
+    capture.name = "Separate screenshot import complete at accessibility size"
+    capture.lifetime = .keepAlways
+    add(capture)
+    app.buttons["Done"].tap()
+    XCTAssertTrue(app.buttons["portfolio-assistant"].waitForExistence(timeout: 5))
+  }
+  func testDismissDuringAnalysisDoesNotRequireCancellation() {
+    let app = XCUIApplication()
+    app.launchArguments = ["--ui-fixtures", "--fresh-import"]
+    app.launch()
+    XCTAssertTrue(app.buttons["Add"].waitForExistence(timeout: 15))
+    app.buttons["Add"].tap()
+    app.buttons["Import screenshot"].tap()
+    XCTAssertTrue(app.buttons["Use sample screenshots"].waitForExistence(timeout: 8))
+    app.buttons["Use sample screenshots"].tap()
+    app.buttons["Close"].tap()
+    XCTAssertTrue(app.buttons["portfolio-assistant"].waitForExistence(timeout: 5))
+  }
+}

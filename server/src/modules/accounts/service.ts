@@ -19,12 +19,17 @@ export class AccountService {
   }
   async create(input: unknown) {
     const a = accountInput.parse(input);
-    const [result] = await this.database.sql<
-      Account[]
-    >`INSERT INTO accounts(name,asset_class,source_type,institution,base_currency,external_address,external_subaccount)
-   VALUES(${a.name},${a.assetClass},${a.sourceType},${a.institution ?? null},${a.baseCurrency},${a.externalAddress ?? null},${a.externalSubaccount ?? null}) RETURNING *`;
-    return result!;
+    return this.database.sql.begin(async (tx) => {
+      const [result] = await tx<
+        Account[]
+      >`INSERT INTO accounts(name,asset_class,source_type,institution,base_currency,external_address,external_subaccount)
+        VALUES(${a.name},${a.assetClass},${a.sourceType},${a.institution ?? null},${a.baseCurrency},${a.externalAddress ?? null},${a.externalSubaccount ?? null}) RETURNING *`;
+      if (a.sourceType === "evm_wallet")
+        await tx`INSERT INTO sync_runs(account_id,provider,status) VALUES(${result!.id},'evm_wallet','queued')`;
+      return result!;
+    });
   }
+
   async rename(id: string, name: string) {
     if (!name.trim() || name.length > 120)
       throw new AppError("VALIDATION_ERROR", "Invalid name");

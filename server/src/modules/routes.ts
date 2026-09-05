@@ -75,6 +75,18 @@ export async function registerFinanceRoutes(
       z.object({ name: z.string() }).strict().parse(request.body).name,
     ),
   );
+  app.post("/api/v1/accounts/:id/sync-runs", async (request, reply) =>
+    reply.code(202).send(await sync.enqueue(id(request.params))),
+  );
+  app.get("/api/v1/accounts/:id/sync-runs/:runId", (request) => {
+    const params = z
+      .object({ id: z.uuid(), runId: z.uuid() })
+      .parse(request.params);
+    return sync.getRun(params.id, params.runId);
+  });
+  app.get("/api/v1/accounts/:id/sync-runs", (request) =>
+    sync.getRun(id(request.params)),
+  );
   app.post("/api/v1/accounts/:id/sync", (request) =>
     sync.sync(id(request.params)),
   );

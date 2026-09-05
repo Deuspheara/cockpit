@@ -1,3 +1,4 @@
+import { jobProgress } from "./jobs.js";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Database } from "../../db/index.js";
@@ -59,12 +60,10 @@ export class ImportService {
       : await this.database.sql<ImportSession[]>`
           INSERT INTO import_sessions(account_id,conversation_id)
           VALUES(${accountId ?? null},${conversationId ?? null}) RETURNING *`;
-    if (conversationId && requestId) {
-      await this.database.sql`
-        INSERT INTO agent_messages(id,conversation_id,role,content,kind,metadata,status)
-        VALUES(${requestId},${conversationId},'user','Screenshot attached','screenshot_import',${this.database.sql.json({ importSessionId: session!.id })},'completed')
-        ON CONFLICT(id) DO NOTHING`;
-    }
+    if (session!.conversationId !== (conversationId ?? null))
+      throw new ConflictError(
+        "Request ID belongs to another import conversation",
+      );
     return session!;
   }
   async get(id: string) {
@@ -88,8 +87,15 @@ export class ImportService {
       blockers.unshift(
         "Choose the destination account or enter a new account name.",
       );
+    const [processing] = await this.database
+      .sql`SELECT * FROM import_jobs WHERE import_session_id=${id} ORDER BY created_at DESC LIMIT 1`;
     return {
       ...session,
+      processing: processing ? jobProgress(processing) : null,
+      destination: {
+        accountId: session.accountId,
+        newAccountName: extraction?.likelyAccountName ?? null,
+      },
       extraction,
       blockers,
       warnings: extraction ? extractionWarnings(extraction) : [],
@@ -98,10 +104,20 @@ export class ImportService {
   }
   async extract(
     id: string,
-    image?: { bytes: Buffer; mime: string },
+    image?:
+      | { bytes: Buffer; mime: string }
+      | Array<{ bytes: Buffer; mime: string }>,
     message?: string,
+    job?: {
+      id: string;
+      revision: number;
+      signal: AbortSignal;
+      phase: (phase: string) => Promise<void>;
+    },
   ) {
     const session = await this.get(id);
+    if (job && session.revision !== job.revision)
+      throw new ConflictError("Import revision changed. Re-upload required.");
     if (
       ["applied", "cancelled"].includes(session.status) ||
       session.changeSetId
@@ -110,8 +126,11 @@ export class ImportService {
         "Import is already finalized or has a prepared review",
       );
     const [count] = await this.database
-      .sql`SELECT count(*)::integer AS count FROM import_extractions WHERE import_session_id=${id} AND extraction->>'kind'='screenshot'`;
-    if (image && Number(count?.count) >= 5)
+      .sql`SELECT COALESCE(sum(COALESCE((extraction->>'imageCount')::integer,1)),0)::integer AS count FROM import_extractions WHERE import_session_id=${id} AND extraction->>'kind'='screenshot'`;
+    if (
+      image &&
+      Number(count?.count) + (Array.isArray(image) ? image.length : 1) > 5
+    )
       throw new AppError(
         "UPLOAD_LIMIT",
         "A session accepts at most five screenshots",
@@ -126,30 +145,42 @@ export class ImportService {
           : `Prior candidate: ${JSON.stringify(session.extraction)}\nUser clarification: ${message ?? ""}`,
       },
     ];
-    if (image)
+    for (const selected of image
+      ? Array.isArray(image)
+        ? image
+        : [image]
+      : [])
       content.push({
         type: "image_url",
         image_url: {
-          url: `data:${image.mime};base64,${image.bytes.toString("base64")}`,
+          url: `data:${selected.mime};base64,${selected.bytes.toString("base64")}`,
         },
       });
-    const response = await this.model.complete(
-      [
-        { role: "system", content: system },
-        { role: "user", content },
-      ],
-      {
-        vision: true,
-        responseFormat: {
-          type: "json_schema",
-          json_schema: {
-            name: "finance_import",
-            strict: true,
-            schema: z.toJSONSchema(extractionSchema),
+    const response = await this.model
+      .complete(
+        [
+          { role: "system", content: system },
+          { role: "user", content },
+        ],
+        {
+          vision: true,
+          signal: job
+            ? AbortSignal.any([job.signal, AbortSignal.timeout(180000)])
+            : undefined,
+          timeoutMs: 180000,
+          responseFormat: {
+            type: "json_schema",
+            json_schema: {
+              name: "finance_import",
+              strict: true,
+              schema: z.toJSONSchema(extractionSchema),
+            },
           },
         },
-      },
-    );
+      )
+      .finally(() => {
+        content.splice(0);
+      }); // Release encoded image references on every exit.
     let candidate: ImportExtraction;
     try {
       candidate = extractionSchema.parse(JSON.parse(response.content ?? ""));
@@ -171,13 +202,25 @@ export class ImportService {
         capturedAtInferred: true,
       });
     }
-    merged = await this.enrich(normalizeExtraction(merged));
+    await job?.phase("matching");
+    merged = await this.enrich(
+      normalizeExtraction(merged),
+      job?.phase,
+      job?.signal,
+    );
+    await job?.phase("finalizing");
     const questions = extractionBlockers(merged);
     if (!session.accountId && !merged.likelyAccountName?.trim())
       questions.unshift(
         "Choose the destination account or enter a new account name.",
       );
     await this.database.sql.begin(async (tx) => {
+      if (job) {
+        const [active] =
+          await tx`SELECT status FROM import_jobs WHERE id=${job.id} FOR UPDATE`;
+        if (active?.status !== "running" || job.signal.aborted)
+          throw new ConflictError("Import cancelled");
+      }
       const [locked] = await tx<
         ImportSession[]
       >`SELECT * FROM import_sessions WHERE id=${id} FOR UPDATE`;
@@ -190,8 +233,14 @@ export class ImportService {
         throw new ConflictError(
           "The import changed while extraction was running. Retry with its latest state.",
         );
-      await tx`INSERT INTO import_extractions(import_session_id,artifact_index,extraction) VALUES(${id},${locked.revision},${tx.json({ kind: image ? "screenshot" : "clarification", candidate, merged, ...(message ? { message } : {}) })})`;
+      await tx`INSERT INTO import_extractions(import_session_id,artifact_index,extraction) VALUES(${id},${locked.revision},${tx.json({ kind: image ? "screenshot" : "clarification", imageCount: image ? (Array.isArray(image) ? image.length : 1) : 0, candidate, merged, ...(message ? { message } : {}) })})`;
       const itemCount = merged.positions.length + merged.derivatives.length;
+      if (session.conversationId)
+        await tx`INSERT INTO agent_messages(conversation_id,role,content,kind,metadata,status)
+        VALUES(${session.conversationId},'assistant',${`Screenshot import · ${itemCount} positions ${questions.length ? "to review" : "ready"}`},'import_result',${tx.json({ importSessionId: id })},'completed')
+        ON CONFLICT ((metadata->>'importSessionId')) WHERE kind='import_result' DO UPDATE SET content=excluded.content`;
+      if (job)
+        await tx`UPDATE import_jobs SET status='completed',phase='complete',finished_at=now(),updated_at=now() WHERE id=${job.id}`;
       await tx`UPDATE import_sessions SET revision=revision+1,status=${questions.length ? "needs_input" : "ready_for_review"},model=${this.model.visionModel},summary=${questions.length ? `${itemCount} items found · ${questions.length} need attention` : `${itemCount} items ready for review`},updated_at=now() WHERE id=${id}`;
     });
     return this.get(id);
@@ -226,11 +275,16 @@ export class ImportService {
       position.currency && position.currency === candidate.currency ? 0.05 : 0;
     return Math.min(0.94, overlap + currencyBonus);
   }
-  private async match(position: ImportExtraction["positions"][number]) {
+  private async match(
+    position: ImportExtraction["positions"][number],
+    searches?: Map<string, MarketCandidate[]>,
+  ) {
     if (!this.market) return { status: "unmatched" as const };
     const query = position.isin ?? position.symbol ?? position.name;
     if (!query) return { status: "unmatched" as const };
-    const candidates = await this.market.search(query);
+    const candidates =
+      searches?.get(query.trim().toLowerCase().replace(/\s+/g, " ")) ??
+      (await this.market.search(query).catch(() => []));
     const clean = (value: string | null | undefined) =>
       (value ?? "").trim().toLowerCase();
     const exact = candidates.filter((candidate) =>
@@ -272,14 +326,40 @@ export class ImportService {
   }
   private async enrich(
     extraction: ImportExtraction,
+    phase?: (phase: string) => Promise<void>,
+    signal?: AbortSignal,
   ): Promise<ImportExtraction> {
+    const queries = [
+      ...new Set(
+        extraction.positions
+          .filter((p) => !p.providerKey)
+          .map((p) => p.isin ?? p.symbol ?? p.name ?? "")
+          .map((q) => q.trim().toLowerCase().replace(/\s+/g, " "))
+          .filter(Boolean),
+      ),
+    ];
+    const searches = new Map<string, MarketCandidate[]>();
+    let cursor = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(4, queries.length) }, async () => {
+        while (cursor < queries.length) {
+          signal?.throwIfAborted();
+          const query = queries[cursor++]!;
+          searches.set(
+            query,
+            (await this.market?.search(query, signal).catch(() => [])) ?? [],
+          );
+        }
+      }),
+    );
+    signal?.throwIfAborted();
     const resolved = [] as ImportExtraction["positions"];
     for (const position of extraction.positions) {
       if (position.providerKey) {
         resolved.push({ ...position, matchStatus: "matched" });
         continue;
       }
-      const match = await this.match(position);
+      const match = await this.match(position, searches);
       resolved.push(
         match.status === "matched"
           ? {
@@ -331,6 +411,7 @@ export class ImportService {
         .filter(Boolean)
         .join(" · ");
     }
+    await phase?.("estimating");
     for (const position of combined) {
       if (
         position.quantity !== null ||
@@ -435,6 +516,7 @@ export class ImportService {
     id: string,
     revision: number,
     patch: {
+      accountId?: string | null;
       likelyAccountName?: string | null;
       capturedAt?: string;
       positions?: Array<{
@@ -467,6 +549,9 @@ export class ImportService {
       );
     if (!session.extraction || session.changeSetId)
       throw new ConflictError("This import cannot be edited");
+    if (patch.accountId) await this.changes.requireManual(patch.accountId);
+    const destination =
+      patch.accountId === undefined ? session.accountId : patch.accountId;
     const merged = structuredClone(session.extraction);
     if (Object.hasOwn(patch, "likelyAccountName"))
       merged.likelyAccountName = patch.likelyAccountName ?? null;
@@ -535,14 +620,14 @@ export class ImportService {
     }
     const next = await this.enrich(extractionSchema.parse(merged));
     const blockers = extractionBlockers(next);
-    if (!session.accountId && !next.likelyAccountName?.trim())
+    if (!destination && !next.likelyAccountName?.trim())
       blockers.unshift(
         "Choose the destination account or enter a new account name.",
       );
     const itemCount = next.positions.length + next.derivatives.length;
     await this.database.sql.begin(async (tx) => {
       const updated = await tx`
-        UPDATE import_sessions SET revision=revision+1,
+        UPDATE import_sessions SET revision=revision+1, account_id=${destination},
           status=${blockers.length ? "needs_input" : "ready_for_review"},
           summary=${blockers.length ? `${itemCount} items found · ${blockers.length} need attention` : `${itemCount} items ready for review`},
           updated_at=now()

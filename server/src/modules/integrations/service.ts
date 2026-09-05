@@ -3,7 +3,7 @@ import { PortfolioService } from "../portfolio/service.js";
 import type { Database } from "../../db/index.js";
 import type { Cache } from "../../shared/cache.js";
 import type { Config } from "../../config.js";
-import { AppError, ConflictError } from "../../shared/errors.js";
+import { AppError, ConflictError, NotFoundError } from "../../shared/errors.js";
 import { AccountService } from "../accounts/service.js";
 import { HyperliquidAdapter } from "./hyperliquid/adapter.js";
 import { DydxAdapter } from "./dydx/adapter.js";
@@ -34,7 +34,60 @@ export class SyncService {
    ON CONFLICT ((external_ids->>'providerKey')) WHERE external_ids ? 'providerKey' DO UPDATE SET symbol=excluded.symbol,name=excluded.name,updated_at=now() RETURNING id`;
     return String(asset!.id);
   }
-  async sync(accountId: string) {
+  async enqueue(accountId: string) {
+    const account = await new AccountService(this.database).get(accountId);
+    if (
+      account.sourceType === "manual" ||
+      account.isArchived ||
+      account.metadata.syncDisabled
+    )
+      throw new ConflictError("This account is not enabled for provider sync");
+    const [run] = await this.database
+      .sql`INSERT INTO sync_runs(account_id,provider,status) VALUES(${accountId},${account.sourceType},'queued')
+      ON CONFLICT(account_id) WHERE status IN ('queued','running') DO UPDATE SET account_id=excluded.account_id RETURNING *`;
+    return this.getRun(accountId, String(run!.id));
+  }
+  async getRun(accountId: string, runId?: string) {
+    const rows = runId
+      ? await this.database
+          .sql`SELECT * FROM sync_runs WHERE account_id=${accountId} AND id=${runId}`
+      : await this.database
+          .sql`SELECT * FROM sync_runs WHERE account_id=${accountId} ORDER BY created_at DESC LIMIT 1`;
+    const run = rows[0];
+    if (!run) {
+      if (runId) throw new NotFoundError("Sync run not found");
+      return null;
+    }
+    return {
+      ...run,
+      provider: run.provider === "evm_wallet" ? "alchemy" : run.provider,
+      ...(run.details as Record<string, unknown>),
+    };
+  }
+  async runQueued() {
+    await this.database
+      .sql`UPDATE sync_runs SET status='failed',finished_at=now(),details='{"failure":{"code":"SYNC_INTERRUPTED","message":"Synchronization interrupted. Retry available.","retryable":true}}' WHERE status='running' AND started_at<now()-interval '15 minutes'`;
+    for (let index = 0; index < 20; index++) {
+      const [run] = await this.database
+        .sql`UPDATE sync_runs SET status='running',started_at=now() WHERE id=(SELECT id FROM sync_runs WHERE status='queued' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,account_id`;
+      if (!run) break;
+      try {
+        await this.sync(String(run.accountId), String(run.id));
+      } catch {
+        await this.database
+          .sql`UPDATE sync_runs SET status='failed',finished_at=now(),details='{"failure":{"code":"SYNC_UNAVAILABLE","message":"Synchronization could not start. Check the account and retry.","retryable":true}}' WHERE id=${String(run.id)} AND status='running'`;
+      }
+    }
+  }
+  async sync(
+    accountId: string,
+    claimedRunId?: string,
+  ): Promise<{
+    id: unknown;
+    status: unknown;
+    cached?: boolean;
+    warnings?: string[];
+  }> {
     const account = await new AccountService(this.database).get(accountId);
     if (
       account.sourceType === "manual" ||
@@ -45,21 +98,29 @@ export class SyncService {
     const provider = this.providers[account.sourceType];
     if (!provider)
       throw new AppError("NOT_CONFIGURED", "Provider not configured", 503);
+    if (!claimedRunId) {
+      const [queued] = await this.database
+        .sql`UPDATE sync_runs SET status='running',started_at=now() WHERE account_id=${accountId} AND status='queued' RETURNING id`;
+      if (queued) return this.sync(accountId, String(queued.id));
+    }
     const [previous] = await this.database
       .sql`SELECT cursor,started_at FROM sync_runs WHERE account_id=${accountId} AND status IN ('success','partial') ORDER BY started_at DESC LIMIT 1`;
-    const [recent] = await this.database
-      .sql`SELECT id,status FROM sync_runs WHERE account_id=${accountId} AND started_at>now()-interval '15 seconds' ORDER BY started_at DESC LIMIT 1`;
+    const [recent] = claimedRunId
+      ? []
+      : await this.database
+          .sql`SELECT id,status FROM sync_runs WHERE account_id=${accountId} AND started_at>now()-interval '15 seconds' ORDER BY started_at DESC LIMIT 1`;
     if (recent) return { id: recent.id, status: recent.status, cached: true };
-    let runId: string;
-    try {
-      await this.database
-        .sql`UPDATE sync_runs SET status='failed',error_message='Worker interrupted',finished_at=now() WHERE account_id=${accountId} AND status='running' AND started_at<now()-interval '15 minutes'`;
-      const [run] = await this.database
-        .sql`INSERT INTO sync_runs(account_id,provider,status) VALUES(${accountId},${provider.kind},'running') RETURNING id`;
-      runId = String(run!.id);
-    } catch {
-      throw new ConflictError("A sync is already in progress");
-    }
+    let runId: string = claimedRunId ?? "";
+    if (!claimedRunId)
+      try {
+        await this.database
+          .sql`UPDATE sync_runs SET status='failed',error_message='Worker interrupted',finished_at=now() WHERE account_id=${accountId} AND status='running' AND started_at<now()-interval '15 minutes'`;
+        const [run] = await this.database
+          .sql`INSERT INTO sync_runs(account_id,provider,status,started_at) VALUES(${accountId},${provider.kind},'running',now()) RETURNING id`;
+        runId = String(run!.id);
+      } catch {
+        throw new ConflictError("A sync is already in progress");
+      }
     try {
       const result = await provider.syncAccount(
         account,
@@ -70,6 +131,7 @@ export class SyncService {
           "PROVIDER_ERROR",
           result.warnings.join("; ") || "No provider data available",
           502,
+          { warnings: result.warnings },
         );
       const observedAt = new Date();
       await this.database.sql.begin(async (tx) => {
@@ -105,7 +167,7 @@ export class SyncService {
             ON CONFLICT(account_id,at,resolution,source) DO UPDATE SET equity=excluded.equity,total_pnl=excluded.total_pnl,net_transfers=excluded.net_transfers,retrieved_at=now()`;
         }
         const status = result.warnings.length ? "partial" : "success";
-        await tx`UPDATE sync_runs SET status=${status},cursor=${tx.json(result.cursor)},error_message=${result.warnings.join("; ") || null},finished_at=now() WHERE id=${runId}`;
+        await tx`UPDATE sync_runs SET status=${status},cursor=${tx.json(result.cursor)},error_message=${result.warnings.join("; ") || null},details=${tx.json({ warnings: result.warnings, networkWarnings: result.warnings.map((message) => ({ network: message.split(":")[0], message })) })},finished_at=now() WHERE id=${runId}`;
         await tx`UPDATE accounts SET updated_at=now(),metadata=metadata || ${tx.json(JSON.parse(JSON.stringify(result.metadata ?? {})) as Record<string, string>)} WHERE id=${accountId}`;
       });
       // Record the first usable valuation immediately after connection, not at the next quarter hour.
@@ -130,15 +192,30 @@ export class SyncService {
       };
     } catch (error) {
       const message =
-        error instanceof AppError
-          ? error.message
-          : "Provider data could not be validated or saved";
+        account.sourceType === "evm_wallet"
+          ? error instanceof AppError && error.code === "ALCHEMY_NOT_CONFIGURED"
+            ? error.message
+            : "Alchemy unavailable. Your wallet is saved; retry synchronization."
+          : error instanceof AppError
+            ? error.message
+            : "Provider data could not be validated or saved";
+      const failure = {
+        code:
+          account.sourceType === "evm_wallet"
+            ? error instanceof AppError &&
+              error.code === "ALCHEMY_NOT_CONFIGURED"
+              ? error.code
+              : "ALCHEMY_UNAVAILABLE"
+            : "PROVIDER_ERROR",
+        message,
+        retryable: true,
+      };
       await this.database
-        .sql`UPDATE sync_runs SET status='failed',error_message=${message},finished_at=now() WHERE id=${runId}`;
+        .sql`UPDATE sync_runs SET status='failed',error_message=${message},details=${this.database.sql.json({ failure, ...(error instanceof AppError ? (error.details as Record<string, string[]>) : {}) })},finished_at=now() WHERE id=${runId}`;
       try {
         await this.cache.incr("portfolio:revision");
       } catch {}
-      throw new AppError("PROVIDER_ERROR", message, 502);
+      throw new AppError(failure.code, message, 502, { retryable: true });
     }
   }
   async syncAll() {

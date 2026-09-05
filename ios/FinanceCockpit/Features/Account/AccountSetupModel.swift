@@ -91,6 +91,9 @@ struct AccountDraft {
 
 struct AccountSyncResult: Decodable, Sendable {
   let status: String
+  var id: UUID? = nil
+  var provider: String? = nil
+  var failure: ImportJobDTO.Failure? = nil
   var warnings: [String]? = nil
 }
 
@@ -102,7 +105,7 @@ final class AccountSetupModel {
   private(set) var working = false
   private(set) var error: String?
   private(set) var synced = false
-  private(set) var syncMessage = "Your first sync has completed."
+  private(set) var syncMessage = "Your first sync is queued."
 
   func create(using create: ([String: JSONValue]) async throws -> Account) async {
     guard !working else { return }
@@ -117,9 +120,7 @@ final class AccountSetupModel {
   }
   func sync(using sync: (UUID) async throws -> AccountSyncResult) async {
     guard !working, let account, !synced else { return }
-    working = true
     error = nil
-    defer { working = false }
     do {
       let result = try await sync(account.id)
       switch result.status {
@@ -128,7 +129,7 @@ final class AccountSetupModel {
         syncMessage =
           "Your account is connected, but some data is unavailable. "
           + (result.warnings ?? []).joined(separator: " ")
-      case "running": throw APIError(message: "The first sync is still running. Try again shortly.")
+      case "queued", "running": syncMessage = "Synchronization continues in the background. You can open your account now."
       default: throw APIError(message: "The last sync did not complete. Try again shortly.")
       }
       synced = true

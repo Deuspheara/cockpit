@@ -31,6 +31,7 @@ export class OpenRouterClient {
   async complete(
     messages: unknown[],
     options: {
+      signal?: AbortSignal;
       vision?: boolean;
       responseFormat?: unknown;
       tools?: unknown[];

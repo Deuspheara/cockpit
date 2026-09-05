@@ -230,7 +230,7 @@ export function extractionWarnings(e: ImportExtraction): string[] {
     );
   if (unmatched)
     warnings.push(
-      `${unmatched} instrument ${unmatched === 1 ? "match needs" : "matches need"} verification because market data was unavailable or inconclusive.`,
+      `${unmatched} instrument ${unmatched === 1 ? "match needs" : "matches need"} verification because EODHD market data was unavailable or inconclusive.`,
     );
   if (lowConfidence)
     warnings.push(

@@ -1,190 +1,11 @@
 import SwiftUI
 
-struct ImportConversationCard: View {
-  let session: ImportSessionDTO
-  let onSessionChange: (ImportSessionDTO) -> Void
-  let onAddScreenshots: () -> Void
-
-  @Environment(AppEnvironment.self) private var environment
-  @State private var accountName: String
-  @State private var observedAt: Date
-  @State private var change: ChangeSet?
-  @State private var working = false
-  @State private var error: String?
-
-  init(
-    session: ImportSessionDTO,
-    onSessionChange: @escaping (ImportSessionDTO) -> Void,
-    onAddScreenshots: @escaping () -> Void
-  ) {
-    self.session = session
-    self.onSessionChange = onSessionChange
-    self.onAddScreenshots = onAddScreenshots
-    _accountName = State(initialValue: session.extraction?.likelyAccountName ?? "")
-    _observedAt = State(initialValue: session.extraction?.capturedAt ?? Date())
-  }
-
-  private var blockers: [String] { session.blockers ?? session.questions ?? [] }
-  private var warnings: [String] { session.warnings ?? [] }
-  private var itemCount: Int {
-    (session.extraction?.positions.count ?? 0) + (session.extraction?.derivatives.count ?? 0)
-  }
-
-  var body: some View {
-    VStack(alignment: .leading, spacing: 16) {
-      HStack(alignment: .top, spacing: 10) {
-        AppIcon(name: .review, size: 20)
-          .frame(width: 34, height: 34)
-          .background(Color.accentColor.opacity(0.12), in: Circle())
-        VStack(alignment: .leading, spacing: 3) {
-          Text("Review screenshot import").font(.headline)
-          Text("\(itemCount) item\(itemCount == 1 ? "" : "s") found")
-            .font(.caption).foregroundStyle(.secondary)
-        }
-        Spacer()
-        ImportBadge(
-          text: blockers.isEmpty ? "Ready" : "\(blockers.count) need attention",
-          color: blockers.isEmpty ? .green : .orange)
-      }
-
-      if let extraction = session.extraction {
-        VStack(alignment: .leading, spacing: 10) {
-          TextField("Account name", text: $accountName)
-            .textFieldStyle(.roundedBorder)
-            .accessibilityLabel("Imported account name")
-          DatePicker("Observed", selection: $observedAt, displayedComponents: .date)
-          if extraction.capturedAtInferred {
-            Label("Upload date used — tap the date to correct it", systemImage: "wand.and.stars")
-              .font(.caption).foregroundStyle(.secondary)
-          }
-          Button("Save account details") { Task { await saveDetails() } }
-            .font(.callout.weight(.semibold))
-            .disabled(working || accountName.trimmingCharacters(in: .whitespaces).isEmpty)
-        }
-
-        VStack(spacing: 10) {
-          ForEach(extraction.positions, id: \.candidateId) { position in
-            ImportPositionEditor(session: session, position: position) { updated in
-              onSessionChange(updated)
-            }
-          }
-          ForEach(extraction.derivatives, id: \.candidateId) { derivative in
-            ImportDerivativeEditor(session: session, derivative: derivative) { updated in
-              onSessionChange(updated)
-            }
-          }
-        }
-      }
-
-      if !blockers.isEmpty {
-        VStack(alignment: .leading, spacing: 7) {
-          Label("Needs attention", systemImage: "exclamationmark.triangle")
-            .font(.subheadline.weight(.semibold))
-          ForEach(blockers, id: \.self) { Text("• \($0)").font(.caption) }
-        }
-        .foregroundStyle(.orange)
-      }
-      if !warnings.isEmpty {
-        VStack(alignment: .leading, spacing: 7) {
-          Text("Check these estimates").font(.subheadline.weight(.semibold))
-          ForEach(warnings, id: \.self) { Text("• \($0)").font(.caption) }
-        }
-        .foregroundStyle(.secondary)
-      }
-
-      if let change {
-        ImportChangeSetCard(change: change) { action in await changeAction(action) }
-      } else if session.extraction != nil && blockers.isEmpty && session.status != "applied" {
-        Button {
-          Task { await prepare() }
-        } label: {
-          HStack {
-            Text("Review \(itemCount) imported position\(itemCount == 1 ? "" : "s")")
-            Spacer()
-            if working { ProgressView().tint(.white) } else { AppIcon(name: .arrowRight, size: 16) }
-          }
-          .frame(minHeight: 44)
-        }
-        .buttonStyle(.borderedProminent)
-        .disabled(working)
-      }
-
-      Button("Add another screenshot", action: onAddScreenshots)
-        .disabled(working || session.changeSetId != nil)
-      if let error { Text(error).font(.caption).foregroundStyle(.red) }
-    }
-    .padding(16)
-    .background(Color.primary.opacity(0.045), in: .rect(cornerRadius: 18))
-    .task(id: session.changeSetId) {
-      guard let id = session.changeSetId, change == nil else { return }
-      do { change = try await environment.api?.send("change-sets/\(id)") } catch {
-        self.error = error.localizedDescription
-      }
-    }
-  }
-
-  private func patch(_ body: [String: JSONValue]) async throws -> ImportSessionDTO {
-    guard let api = environment.api else { throw APIError(message: "Server unavailable") }
-    var values = body
-    values["revision"] = .number(Decimal(session.revision))
-    return try await api.send("imports/\(session.id)", method: "PATCH", body: values)
-  }
-  private func saveDetails() async {
-    working = true
-    defer { working = false }
-    do {
-      let updated = try await patch([
-        "likelyAccountName": .string(accountName.trimmingCharacters(in: .whitespacesAndNewlines)),
-        "capturedAt": .string(ISO8601DateFormatter().string(from: observedAt)),
-      ])
-      onSessionChange(updated)
-      error = nil
-    } catch { self.error = error.localizedDescription }
-  }
-  private func prepare() async {
-    working = true
-    defer { working = false }
-    do {
-      var current = session
-      let name = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
-      if name != session.extraction?.likelyAccountName || observedAt != session.extraction?.capturedAt {
-        current = try await patch([
-          "likelyAccountName": .string(name),
-          "capturedAt": .string(ISO8601DateFormatter().string(from: observedAt)),
-        ])
-        onSessionChange(current)
-      }
-      guard (current.blockers ?? current.questions ?? []).isEmpty else { return }
-      let body: [String: JSONValue] = name.isEmpty ? [:] : ["accountName": .string(name)]
-      change = try await environment.api?.send(
-        "imports/\(session.id)/prepare-change-set", method: "POST", body: body)
-      let refreshed: ImportSessionDTO? = try await environment.api?.send("imports/\(session.id)")
-      if let refreshed { onSessionChange(refreshed) }
-      error = nil
-    } catch { self.error = error.localizedDescription }
-  }
-  private func changeAction(_ action: String) async {
-    guard let currentChange = change else { return }
-    working = true
-    defer { working = false }
-    do {
-      let result: ChangeSet? = try await environment.api?.send(
-        "change-sets/\(currentChange.id)/\(action)", method: "POST")
-      change = action == "undo" ? nil : result
-      environment.dataRevision += 1
-      let refreshed: ImportSessionDTO? = try await environment.api?.send("imports/\(session.id)")
-      if let refreshed { onSessionChange(refreshed) }
-      error = nil
-    } catch { self.error = error.localizedDescription }
-  }
-}
-
-private struct ImportPositionEditor: View {
+struct ImportPositionEditor: View {
   let session: ImportSessionDTO
   let position: ImportSessionDTO.Extraction.Candidate
   let onSaved: (ImportSessionDTO) -> Void
   @Environment(AppEnvironment.self) private var environment
-  @State private var expanded = false
+  @Environment(\.dismiss) private var dismiss
   @State private var symbol: String
   @State private var quantity: String
   @State private var value: String
@@ -207,7 +28,7 @@ private struct ImportPositionEditor: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Button { expanded.toggle() } label: {
+      Group {
         HStack(alignment: .top, spacing: 10) {
           VStack(alignment: .leading, spacing: 5) {
             Text(position.name ?? position.symbol ?? "Unknown instrument").font(.subheadline.weight(.semibold))
@@ -236,11 +57,10 @@ private struct ImportPositionEditor: View {
         }
         .contentShape(Rectangle())
       }
-      .buttonStyle(.plain)
-      if expanded {
+      Group {
         TextField("Symbol", text: $symbol).textFieldStyle(.roundedBorder)
-        HStack {
-          TextField("Quantity (optional)", text: $quantity).keyboardType(.decimalPad)
+        VStack(alignment: .leading, spacing: 12) {
+          TextField("Quantity (optional)", text: $quantity).keyboardType(.decimalPad).accessibilityIdentifier("import-quantity")
           TextField("Market value", text: $value).keyboardType(.decimalPad)
           TextField("Currency", text: $currency).textInputAutocapitalization(.characters)
             .frame(maxWidth: 82)
@@ -276,7 +96,7 @@ private struct ImportPositionEditor: View {
       let updated: ImportSessionDTO = try await api.send(
         "imports/\(session.id)", method: "PATCH", body: body)
       onSaved(updated)
-      expanded = false
+      dismiss()
       error = nil
     } catch { self.error = error.localizedDescription }
   }
@@ -285,12 +105,12 @@ private struct ImportPositionEditor: View {
   }
 }
 
-private struct ImportDerivativeEditor: View {
+struct ImportDerivativeEditor: View {
   let session: ImportSessionDTO
   let derivative: ImportSessionDTO.Extraction.Derivative
   let onSaved: (ImportSessionDTO) -> Void
   @Environment(AppEnvironment.self) private var environment
-  @State private var expanded = false
+  @Environment(\.dismiss) private var dismiss
   @State private var underlying: String
   @State private var optionType: String
   @State private var strike: String
@@ -319,7 +139,7 @@ private struct ImportDerivativeEditor: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 10) {
-      Button { expanded.toggle() } label: {
+      Group {
         HStack {
           VStack(alignment: .leading, spacing: 5) {
             Text(derivative.name ?? "\((derivative.optionType ?? "Option").capitalized) \(underlying)")
@@ -339,19 +159,19 @@ private struct ImportDerivativeEditor: View {
           Text(derivative.marketValue.map { FinanceFormat.amount($0, currency: derivative.currency ?? currency) } ?? "Value unknown")
             .monospacedDigit()
         }
-      }.buttonStyle(.plain)
-      if expanded {
+      }
+      Group {
         TextField("Underlying symbol", text: $underlying).textFieldStyle(.roundedBorder)
         Picker("Option type", selection: $optionType) {
           Text("Call").tag("call")
           Text("Put").tag("put")
         }
         .pickerStyle(.segmented)
-        HStack {
+        VStack(alignment: .leading, spacing: 12) {
           TextField("Strike", text: $strike).keyboardType(.decimalPad)
           TextField("Expiration YYYY-MM-DD", text: $expiration)
         }.textFieldStyle(.roundedBorder)
-        HStack {
+        VStack(alignment: .leading, spacing: 12) {
           TextField("Contracts (optional)", text: $quantity).keyboardType(.decimalPad)
           TextField("Market value", text: $value).keyboardType(.decimalPad)
           TextField("Currency", text: $currency).frame(maxWidth: 82)
@@ -383,31 +203,9 @@ private struct ImportDerivativeEditor: View {
       let updated: ImportSessionDTO = try await api.send(
         "imports/\(session.id)", method: "PATCH", body: body)
       onSaved(updated)
-      expanded = false
+      dismiss()
       error = nil
     } catch { self.error = error.localizedDescription }
-  }
-}
-
-private struct ImportChangeSetCard: View {
-  let change: ChangeSet
-  let action: (String) async -> Void
-  var body: some View {
-    VStack(alignment: .leading, spacing: 10) {
-      Label(change.status == "applied" ? "Import applied" : "Ready to apply", systemImage: change.status == "applied" ? "checkmark.circle.fill" : "checkmark.shield")
-        .font(.headline)
-      Text(change.summary).font(.callout).foregroundStyle(.secondary)
-      Text("\(change.operations.count) record\(change.operations.count == 1 ? "" : "s") will be created")
-        .font(.caption).foregroundStyle(.secondary)
-      if change.status == "draft" {
-        Button("Apply imported positions") { Task { await action("apply") } }
-          .buttonStyle(.borderedProminent)
-      } else if change.status == "applied" {
-        Button("Undo import") { Task { await action("undo") } }
-      }
-    }
-    .padding(14)
-    .background(Color.accentColor.opacity(0.09), in: .rect(cornerRadius: 14))
   }
 }
 

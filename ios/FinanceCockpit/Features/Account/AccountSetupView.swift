@@ -33,12 +33,12 @@ struct AccountSetupView: View {
       }
       .toolbar { closeButton }
     }
-    .interactiveDismissDisabled(model.working)
+    .interactiveDismissDisabled(model.working && model.account == nil)
   }
 
   @ToolbarContentBuilder private var closeButton: some ToolbarContent {
     ToolbarItem(placement: .cancellationAction) {
-      Button("Close") { dismiss() }.disabled(model.working)
+      Button("Close") { dismiss() }.disabled(model.working && model.account == nil)
     }
   }
   private func progress(_ step: Int) -> some View {
@@ -81,11 +81,11 @@ struct AccountSetupView: View {
               choice(
                 provider.title,
                 detail: provider == .evmWallet
-                  ? "Track a public wallet" : "Sync your account read-only"
+                  ? (environment.sessionInfo?.walletConfigured == true ? "Track a public wallet" : "Alchemy not configured. Configure ALCHEMY_API_KEY on the server.") : "Sync your account read-only"
               ) {
                 model.draft.provider = provider
                 model.path.append(.details)
-              }
+              }.disabled(provider == .evmWallet && environment.sessionInfo?.walletConfigured != true)
             }
           } else {
             ForEach(ManualAccountCategory.allCases) { category in
@@ -185,14 +185,14 @@ struct AccountSetupView: View {
                 : (model.synced ? model.syncMessage : "Your account is saved.")
             )
             .foregroundStyle(.secondary)
-            if model.working { ProgressView("Syncing account…") }
+            if account.sourceType != "manual" { AccountSyncStatusView(accountID: account.id) }
             if let error = model.error {
               Text(error).foregroundStyle(.red)
               Button("Retry sync") { Task { await sync() } }.disabled(model.working)
             }
           }
           Section {
-            Button("View account") { onOpen(account) }.disabled(model.working)
+            Button("View account") { onOpen(account) }
           }
         }
       }
@@ -212,7 +212,7 @@ struct AccountSetupView: View {
   private func sync() async {
     guard let api = environment.api else { return }
     await model.sync { id in
-      try await api.send("accounts/\(id)/sync", method: "POST")
+      try await api.send("accounts/\(id)/sync-runs", method: "POST")
     }
     environment.dataRevision += 1
   }

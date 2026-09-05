@@ -45,6 +45,17 @@
     var observation: [String: JSONValue] = [:]
     var changeID = UUID()
     var applied = false
+    let importID = UUID()
+    let candidateID = UUID()
+    let jobID = UUID()
+    var importRevision = 0
+    var imported = false
+    var importPrepared = false
+    var importUndone = false
+    var importQuantity = "2"
+    var importName = "Screenshot account"
+    var jobReads = 0
+    var importCancelled = false
 
     func encode<T: Encodable>(_ value: T) throws -> Data {
       let encoder = JSONEncoder()
@@ -69,12 +80,33 @@
     func response(_ request: URLRequest) throws -> Data {
       let url = request.url!
       let path = url.path.replacingOccurrences(of: "/api/v1/", with: "")
-      let input = try body(request)
+      let input = request.value(forHTTPHeaderField: "Content-Type")?.contains("multipart") == true ? [:] : try body(request)
       let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
       let range =
         PortfolioRange(rawValue: query.first { $0.name == "range" }?.value ?? "1m") ?? .month
       let scope =
         PortfolioScope(rawValue: query.first { $0.name == "scope" }?.value ?? "global") ?? .global
+      if path == "imports" { return try importResponse() }
+      if path.hasPrefix("imports/") {
+        if path.contains("/cancel") { importCancelled = true; return try encode(importJob()) }
+        if path.hasSuffix("/jobs") { jobReads = 0; return try encode(importJob()) }
+        if path.hasSuffix("/prepare-change-set") { importPrepared = true; return try encode(importChange()) }
+        if request.httpMethod == "PATCH" {
+          importRevision += 1
+          if let name = input["likelyAccountName"] { importName = name.display }
+          if case .array(let rows) = input["positions"], case .object(let row) = rows.first, let quantity = row["quantity"] { importQuantity = quantity.display }
+        }
+        jobReads += 1
+        if jobReads > 2 { imported = true }
+        return try importResponse()
+      }
+      if path.hasPrefix("change-sets/"), importPrepared {
+        if path.hasSuffix("/apply") { applied = true }
+        if path.hasSuffix("/undo") { importUndone = true }
+        let result = try encode(importChange())
+        if path.hasSuffix("/reject") { importPrepared = false }
+        return result
+      }
       if path == "accounts", request.httpMethod == "POST" {
         let account = Account(
           id: UUID(), name: input["name"]!.display, assetClass: input["assetClass"]!.display,
@@ -92,7 +124,7 @@
         return try encode(asset)
       }
       if path == "assets" { return try encode(assets) }
-      if path.hasSuffix("/sync") {
+      if path.hasSuffix("/sync") || path.hasSuffix("/sync-runs") {
         if ProcessInfo.processInfo.arguments.contains("--sync-failure") {
           throw APIError(message: "Fixture sync unavailable")
         }
@@ -119,6 +151,19 @@
       }
       if path == "portfolio/assets" || path == "activity" { return Data("[]".utf8) }
       throw APIError(message: "No UI fixture for \(path)")
+    }
+    func importJob() -> [String: JSONValue] {
+      ["id": .string(jobID.uuidString), "status": .string(importCancelled ? "cancelled" : imported ? "completed" : "running"), "phase": .string(imported ? "complete" : "extracting"), "failure": .null]
+    }
+    func importResponse() throws -> Data {
+      var result: [String: JSONValue] = ["id": .string(importID.uuidString), "status": .string("ready_for_review"), "revision": .number(Decimal(importRevision)), "blockers": .array([]), "warnings": .array([.string("Quantity estimated from EODHD")]), "processing": .object(importJob()), "changeSetId": importPrepared ? .string(changeID.uuidString) : .null]
+      if imported {
+        result["extraction"] = .object(["likelyAccountName": .string(importName), "capturedAt": .string("2026-09-01T00:00:00Z"), "capturedAtInferred": .bool(false), "currency": .string("EUR"), "positions": .array([.object(["candidateId": .string(candidateID.uuidString), "symbol": .string("AAPL"), "name": .string("Apple"), "quantity": .string(importQuantity), "marketValue": .string("400"), "currency": .string("EUR"), "confidence": .number(1), "matchStatus": .string("matched"), "quantitySource": .string("estimated"), "sourceLines": .number(1), "sourceCandidateIds": .array([])])]), "derivatives": .array([])])
+      }
+      return try encode(result)
+    }
+    func importChange() -> ChangeSet {
+      ChangeSet(id: changeID, title: "Import screenshots", summary: "One holding", status: importUndone ? "undone" : applied ? "applied" : "draft", operations: [.init(table: "accounts", id: initial.id, before: nil, after: [:])], labels: nil, effects: nil)
     }
     func change() -> ChangeSet {
       ChangeSet(

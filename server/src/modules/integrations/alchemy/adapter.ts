@@ -51,8 +51,8 @@ export class AlchemyPortfolioAdapter {
   async syncAccount(account: Account): Promise<ProviderSyncResult> {
     if (!this.apiKey)
       throw new AppError(
-        "NOT_CONFIGURED",
-        "Configure ALCHEMY_API_KEY on the server to connect public wallets",
+        "ALCHEMY_NOT_CONFIGURED",
+        "Alchemy not configured. Configure ALCHEMY_API_KEY on the server.",
         503,
       );
     const networks = z.array(networkSchema).min(1).max(3).parse(this.networks);
@@ -136,7 +136,7 @@ export class AlchemyPortfolioAdapter {
           );
       } else
         result.warnings.push(
-          `${network}: balance retrieval failed; last known positions retained`,
+          `${network}: Alchemy ${response.reason instanceof AppError && /HTTP 40[13]/.test(response.reason.message) ? "rejected the API key" : "unavailable"}; last known positions retained`,
         );
     });
     return result;

@@ -266,9 +266,11 @@ export const syncRuns = pgTable("sync_runs", {
   status: text("status").notNull(),
   cursor: jsonb("cursor"),
   errorMessage: text("error_message"),
-  startedAt: timestamp("started_at", { withTimezone: true })
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
+  details: jsonb("details").notNull().default({}),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
 });
 export const fxQuotes = pgTable("fx_quotes", {
@@ -433,4 +435,22 @@ export const agentToolResults = pgTable("agent_tool_results", {
   key: text("key").notNull(),
   result: jsonb("result").notNull(),
   proposalId: uuid("proposal_id"),
+});
+
+export const importJobs = pgTable("import_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  importSessionId: uuid("import_session_id").notNull(),
+  requestId: uuid("request_id").notNull(),
+  sessionRevision: integer("session_revision").notNull(),
+  status: text("status").notNull(),
+  phase: text("phase").notNull(),
+  failure: jsonb("failure"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
 });

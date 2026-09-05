@@ -1,3 +1,4 @@
+import { ImportJobs, type Screenshot } from "./jobs.js";
 import type { FastifyInstance } from "fastify";
 import multipart from "@fastify/multipart";
 import { z } from "zod";
@@ -7,7 +8,7 @@ import type { Cache } from "../../shared/cache.js";
 import { OpenRouterClient } from "../agent/openrouter.js";
 import { ChangeSetService } from "../changes/service.js";
 import { ImportService } from "./service.js";
-import { validateImage } from "./images.js";
+import { validateImage, readImageBytes } from "./images.js";
 import { AppError } from "../../shared/errors.js";
 import { EODHDMarketData } from "./market-data.js";
 import { currency, decimalString } from "../../shared/decimal.js";
@@ -34,13 +35,81 @@ export async function registerImportRoutes(
   );
   const id = (params: unknown) =>
     z.object({ id: z.uuid().toLowerCase() }).parse(params).id;
-  app.post("/api/v1/imports", (request) =>
-    imports.create(
-      z
-        .object({ accountId: z.uuid().toLowerCase().optional() })
-        .strict()
-        .parse(request.body ?? {}).accountId,
-    ),
+  const jobs = new ImportJobs(database, imports);
+  await jobs.expire();
+
+  app.post("/api/v1/imports", (request) => {
+    const body = z
+      .object({
+        accountId: z.uuid().optional(),
+        conversationId: z.uuid().optional(),
+        requestId: z.uuid().optional(),
+      })
+      .strict()
+      .parse(request.body ?? {});
+    return imports.create(body.accountId, body.conversationId, body.requestId);
+  });
+  const jobParams = (params: unknown) =>
+    z.object({ id: z.uuid(), jobId: z.uuid() }).parse(params);
+  app.get("/api/v1/imports/:id/jobs/:jobId", (request) => {
+    const p = jobParams(request.params);
+    return jobs.get(p.id, p.jobId);
+  });
+  app.post("/api/v1/imports/:id/jobs/:jobId/cancel", (request) => {
+    const p = jobParams(request.params);
+    return jobs.cancel(p.id, p.jobId);
+  });
+  app.post(
+    "/api/v1/imports/:id/jobs",
+    { bodyLimit: config.MAX_UPLOAD_MB * 1024 * 1024 * 5 + 65536 },
+    async (request, reply) => {
+      const images: Screenshot[] = [];
+      let handedOff = false;
+      try {
+        const query = z
+          .object({
+            requestId: z.uuid(),
+            revision: z.coerce.number().int().nonnegative(),
+          })
+          .strict()
+          .parse(request.query);
+        for await (const part of request.parts()) {
+          if (part.type !== "file")
+            throw new AppError(
+              "INVALID_IMAGE",
+              "Only screenshot files are accepted",
+            );
+          const bytes = await readImageBytes(
+            part.file,
+            config.MAX_UPLOAD_MB * 1024 * 1024,
+          );
+          images.push({ bytes, mime: part.mimetype });
+          validateImage(
+            bytes,
+            part.mimetype,
+            config.MAX_UPLOAD_MB * 1024 * 1024,
+          );
+          if (part.file.truncated)
+            throw new AppError(
+              "UPLOAD_LIMIT",
+              "Screenshot exceeds upload limit",
+              413,
+            );
+        }
+        if (!images.length)
+          throw new AppError("INVALID_IMAGE", "Choose at least one screenshot");
+        const job = await jobs.create(
+          id(request.params),
+          query.requestId,
+          query.revision,
+          images,
+        );
+        handedOff = true;
+        return reply.code(202).send(job);
+      } finally {
+        if (!handedOff) images.forEach((image) => image.bytes.fill(0));
+      }
+    },
   );
   app.post("/api/v1/agent/conversations/:id/imports", (request) => {
     const body = z
@@ -65,7 +134,10 @@ export async function registerImportRoutes(
             "INVALID_IMAGE",
             "Only screenshot files are accepted",
           );
-        const bytes = await part.toBuffer();
+        const bytes = await readImageBytes(
+          part.file,
+          config.MAX_UPLOAD_MB * 1024 * 1024,
+        );
         try {
           validateImage(
             bytes,
@@ -99,6 +171,7 @@ export async function registerImportRoutes(
     const body = z
       .object({
         revision: z.number().int().nonnegative(),
+        accountId: z.uuid().nullable().optional(),
         likelyAccountName: editableText.optional(),
         capturedAt: z.iso.datetime({ offset: true }).optional(),
         positions: z
@@ -156,4 +229,5 @@ export async function registerImportRoutes(
         .parse(request.body ?? {}),
     ),
   );
+  return jobs;
 }

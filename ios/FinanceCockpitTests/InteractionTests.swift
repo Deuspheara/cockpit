@@ -161,7 +161,7 @@ struct AccountSetupTests {
     let model = AccountSetupModel()
     model.draft.address = "0x" + String(repeating: "1", count: 40)
     await model.create { _ in account(source: "hyperliquid", category: "crypto") }
-    for status in ["running", "failed"] {
+    for status in ["failed"] {
       await model.sync { _ in AccountSyncResult(status: status) }
       #expect(!model.synced)
       #expect(model.error != nil)
@@ -212,5 +212,38 @@ struct AccountSetupTests {
       let selectedSize = selected.sizeThatFits(in: proposal)
       #expect(abs(idleSize.height - selectedSize.height) < 1)
     }
+  }
+}
+
+@MainActor struct BackgroundSyncTests {
+  @Test func queuedSyncAllowsNavigationWithoutClaimingCompletion() async throws {
+    let model = AccountSetupModel()
+    model.draft.address = "0x" + String(repeating: "a", count: 40)
+    let account = try APIClient.decoder().decode(Account.self, from: Data("""
+      {"id":"00000000-0000-0000-0000-000000000001","name":"Wallet","assetClass":"crypto","sourceType":"evm_wallet","baseCurrency":"EUR","isArchived":false,"metadata":{}}
+      """.utf8))
+    await model.create { _ in account }
+    await model.sync { _ in AccountSyncResult(status: "queued") }
+    #expect(model.account?.id == account.id)
+    #expect(!model.working)
+    #expect(model.error == nil)
+    #expect(model.syncMessage.contains("background"))
+  }
+  @Test func providerFailuresPreserveTheirMessages() {
+    for (code, message) in [("AI_UNAVAILABLE", "OpenRouter unavailable"), ("EODHD_QUOTA", "EODHD quota exhausted"), ("ALCHEMY_UNAVAILABLE", "Alchemy unavailable"), ("SERVER_ERROR", "Server unavailable")] {
+      let data = Data("{\"error\":{\"code\":\"\(code)\",\"message\":\"\(message)\",\"retryable\":true}}".utf8)
+      let error = APIClient.failure(data, status: 503)
+      #expect(error.code == code)
+      #expect(error.message == message)
+    }
+    #expect(!APIClient.failure(Data("<html>gateway</html>".utf8), status: 502).message.contains("AI"))
+  }
+  @Test func restoredJobDistinguishesProcessingAndReupload() throws {
+    let active = try APIClient.decoder().decode(ImportJobDTO.self, from: Data("{\"id\":\"00000000-0000-0000-0000-000000000001\",\"status\":\"running\",\"phase\":\"matching\",\"failure\":null}".utf8))
+    #expect(active.isActive)
+    let failed = try APIClient.decoder().decode(ImportJobDTO.self, from: Data("{\"id\":\"00000000-0000-0000-0000-000000000001\",\"status\":\"failed\",\"phase\":\"extracting\",\"failure\":{\"code\":\"REUPLOAD_REQUIRED\",\"message\":\"Re-upload required\",\"retryable\":true}}".utf8))
+    #expect(!failed.isActive)
+    #expect(failed.failure?.retryable == true)
+    #expect(ImportStage.allCases.map(\.title) == ["Upload & Analysis", "Account & Date", "Holdings", "Confirm", "Complete"])
   }
 }

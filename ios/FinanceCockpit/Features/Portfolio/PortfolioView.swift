@@ -8,6 +8,7 @@ struct PortfolioView: View {
   @State private var assetSnapshot = SnapshotLoader<[PortfolioAssetLine]>()
   @State private var assistantPresented = false
   @State private var assistantStartsImport = false
+  @State private var importPresented = false
   @State private var openedAccount: UUID?
   @State private var sheet: PortfolioSheet?
 
@@ -76,8 +77,7 @@ struct PortfolioView: View {
           .accessibilityIdentifier("portfolio-assistant")
           Menu {
             Button("Import screenshot") {
-              assistantStartsImport = true
-              assistantPresented = true
+              importPresented = true
             }
             Button("Add account") { sheet = .add }
             Button("Add manually") { sheet = .manual }
@@ -106,6 +106,7 @@ struct PortfolioView: View {
     .fullScreenCover(isPresented: $assistantPresented) {
       NavigationStack { AgentView(startImport: assistantStartsImport) }
     }
+    .fullScreenCover(isPresented: $importPresented) { NavigationStack { ImportView() } }
     .sheet(item: $sheet) { item in
       switch item {
       case .add:

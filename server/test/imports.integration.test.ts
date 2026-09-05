@@ -85,7 +85,7 @@ describe.skipIf(!url)(
       await db.sql`TRUNCATE accounts,assets,import_sessions CASCADE`;
       await db.close();
     });
-    it("keeps images transient, persists one typed chat attachment, and infers the date", async () => {
+    it("keeps images transient, persists one compact result link, and infers the date", async () => {
       const session = await imports.extract(sessionId, {
         bytes: Buffer.from("fixture screenshot bytes"),
         mime: "image/png",
@@ -103,7 +103,7 @@ describe.skipIf(!url)(
       const messages =
         await db.sql`SELECT kind,metadata FROM agent_messages WHERE metadata->>'importSessionId'=${sessionId}`;
       expect(messages).toHaveLength(1);
-      expect(messages[0]?.kind).toBe("screenshot_import");
+      expect(messages[0]?.kind).toBe("import_result");
       expect(await db.sql`SELECT id FROM accounts`).toHaveLength(0);
     });
     it("uses revision-checked edits then creates only observations after inline review", async () => {
