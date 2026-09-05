@@ -1,11 +1,12 @@
 import SwiftUI
 
 struct ImportPositionEditor: View {
-  let session: ImportSessionDTO
-  let position: ImportSessionDTO.Extraction.Candidate
+  @State var session: ImportSessionDTO
+  @State var position: ImportSessionDTO.Extraction.Candidate
   let onSaved: (ImportSessionDTO) -> Void
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
+  @State private var selectedMatch: ImportSessionDTO.Extraction.Candidate.Match?
   @State private var name: String
   @State private var symbol: String
   @State private var quantity: String
@@ -18,8 +19,8 @@ struct ImportPositionEditor: View {
     session: ImportSessionDTO, position: ImportSessionDTO.Extraction.Candidate,
     onSaved: @escaping (ImportSessionDTO) -> Void
   ) {
-    self.session = session
-    self.position = position
+    _session = State(initialValue: session)
+    _position = State(initialValue: position)
     self.onSaved = onSaved
     _name = State(initialValue: position.name ?? "")
     _symbol = State(initialValue: position.symbol ?? "")
@@ -64,6 +65,23 @@ struct ImportPositionEditor: View {
           Text("We’ll look up the investment from its name. You don’t need to know its ticker.")
             .font(.callout).foregroundStyle(.secondary)
         }
+        if let matches = position.matchCandidates, !matches.isEmpty {
+          Text("Choose the investment shown in your screenshot").font(.callout)
+          ForEach(Array(matches.enumerated()), id: \.offset) { _, match in
+            Button {
+              selectedMatch = match
+              name = match.name
+              symbol = match.symbol
+            } label: {
+              VStack(alignment: .leading) {
+                Text(match.name)
+                Text([match.symbol, match.exchange, match.isin, match.currency].compactMap { $0 }.joined(separator: " · "))
+                  .font(.caption).foregroundStyle(.secondary)
+                if selectedMatch?.symbol == match.symbol && selectedMatch?.isin == match.isin { Text("Selected").font(.caption) }
+              }
+            }.buttonStyle(.bordered)
+          }
+        }
         LabeledContent("Position value") {
           TextField("Value", text: $value).keyboardType(.decimalPad).multilineTextAlignment(.trailing)
         }
@@ -94,13 +112,33 @@ struct ImportPositionEditor: View {
     working = true
     defer { working = false }
     do {
+      var correction = position.correction(name: name, symbol: symbol, quantity: quantity, value: value, currency: currency)
+      if let selectedMatch, selectedMatch.name == name, selectedMatch.symbol == symbol {
+        correction["isin"] = selectedMatch.isin.map(JSONValue.string) ?? .null
+        correction["symbol"] = .string(selectedMatch.symbol)
+        correction["name"] = .string(selectedMatch.name)
+      }
       let body: [String: JSONValue] = [
         "revision": .number(Decimal(session.revision)),
-        "positions": .array([.object(position.correction(name: name, symbol: symbol, quantity: quantity, value: value, currency: currency))]),
+        "positions": .array([.object(correction)]),
       ]
       let updated: ImportSessionDTO = try await api.send(
         "imports/\(session.id)", method: "PATCH", body: body)
+      session = updated
       onSaved(updated)
+      if let latest = updated.extraction?.positions.first(where: { $0.candidateId == position.candidateId }) {
+        position = latest
+        name = latest.name ?? ""
+        symbol = latest.symbol ?? ""
+        quantity = latest.quantity.map(Self.decimal) ?? ""
+        value = latest.marketValue.map(Self.decimal) ?? ""
+        currency = latest.currency ?? updated.extraction?.currency ?? currency
+        let issues = updated.remainingIssues(for: latest)
+        if !issues.isEmpty {
+          error = "Changes saved. " + issues.joined(separator: " ")
+          return
+        }
+      }
       dismiss()
       error = nil
     } catch { self.error = error.localizedDescription }
@@ -111,8 +149,8 @@ struct ImportPositionEditor: View {
 }
 
 struct ImportDerivativeEditor: View {
-  let session: ImportSessionDTO
-  let derivative: ImportSessionDTO.Extraction.Derivative
+  @State var session: ImportSessionDTO
+  @State var derivative: ImportSessionDTO.Extraction.Derivative
   let onSaved: (ImportSessionDTO) -> Void
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
@@ -130,8 +168,8 @@ struct ImportDerivativeEditor: View {
     session: ImportSessionDTO, derivative: ImportSessionDTO.Extraction.Derivative,
     onSaved: @escaping (ImportSessionDTO) -> Void
   ) {
-    self.session = session
-    self.derivative = derivative
+    _session = State(initialValue: session)
+    _derivative = State(initialValue: derivative)
     self.onSaved = onSaved
     _underlying = State(initialValue: derivative.underlyingSymbol ?? "")
     _optionType = State(initialValue: derivative.optionType ?? "")
@@ -198,7 +236,7 @@ struct ImportDerivativeEditor: View {
         "revision": .number(Decimal(session.revision)),
         "derivatives": .array([.object([
           "candidateId": .string(id.uuidString.lowercased()), "underlyingSymbol": .string(underlying),
-          "optionType": .string(optionType),
+          "optionType": optionType.isEmpty ? .null : .string(optionType),
           "strike": strike.isEmpty ? .null : .string(strike.replacingOccurrences(of: ",", with: ".")),
           "expiration": expiration.isEmpty ? .null : .string(expiration),
           "quantity": quantity.isEmpty ? .null : .string(quantity.replacingOccurrences(of: ",", with: ".")),
@@ -208,7 +246,16 @@ struct ImportDerivativeEditor: View {
       ]
       let updated: ImportSessionDTO = try await api.send(
         "imports/\(session.id)", method: "PATCH", body: body)
+      session = updated
       onSaved(updated)
+      if let latest = updated.extraction?.derivatives.first(where: { $0.candidateId == derivative.candidateId }) {
+        derivative = latest
+        let issues = updated.remainingIssues(for: latest)
+        if !issues.isEmpty {
+          error = "Changes saved. " + issues.joined(separator: " ")
+          return
+        }
+      }
       dismiss()
       error = nil
     } catch { self.error = error.localizedDescription }
@@ -246,5 +293,31 @@ extension ImportSessionDTO.Extraction.Candidate {
     if amount(value) != decimal(marketValue) { edit["marketValue"] = optional(amount(value)) }
     if clean(currency).uppercased() != self.currency { edit["currency"] = optional(clean(currency).uppercased()) }
     return edit
+  }
+}
+
+
+extension ImportSessionDTO {
+  func remainingIssues(for p: Extraction.Candidate) -> [String] {
+    if let issues = candidateIssues?[p.candidateId?.uuidString.lowercased() ?? ""] { return issues }
+    var issues: [String] = []
+    if (p.symbol ?? "").isEmpty || p.matchStatus == "ambiguous" {
+      issues.append("We couldn’t identify a unique investment. Refine its name or enter its exact ticker under Edit quantity or ticker.")
+    }
+    if p.quantity == nil && p.marketValue == nil { issues.append("Enter the position value or quantity.") }
+    if (p.currency ?? extraction?.currency) == nil { issues.append("Enter the currency.") }
+    if (p.quantity?.decimal ?? 0) < 0 || (p.marketValue?.decimal ?? 0) < 0 { issues.append("Check the negative quantity or value.") }
+    return issues
+  }
+  func remainingIssues(for d: Extraction.Derivative) -> [String] {
+    if let issues = candidateIssues?[d.candidateId?.uuidString.lowercased() ?? ""] { return issues }
+    var issues: [String] = []
+    if d.underlyingSymbol == nil || d.optionType == nil || d.expiration == nil || (d.strike?.decimal ?? 0) <= 0 {
+      issues.append("Enter the underlying, option type, positive strike and expiration.")
+    }
+    if d.quantity == nil && d.marketValue == nil { issues.append("Enter the market value or contract quantity.") }
+    if d.currency == nil { issues.append("Enter the currency.") }
+    if (d.quantity?.decimal ?? 0) < 0 || (d.marketValue?.decimal ?? 0) < 0 { issues.append("Check the negative quantity or value.") }
+    return issues
   }
 }

@@ -5,6 +5,14 @@ import UIKit
 struct ImportSessionDTO: Decodable, Sendable {
   struct Extraction: Decodable, Sendable {
     struct Candidate: Decodable, Sendable {
+      struct Match: Decodable, Sendable {
+        let symbol: String
+        let name: String
+        let isin: String?
+        let exchange: String
+        let currency: String?
+      }
+      let matchCandidates: [Match]?
       let candidateId: UUID?
       let symbol: String?
       let name: String?
@@ -55,6 +63,7 @@ struct ImportSessionDTO: Decodable, Sendable {
   let extraction: Extraction?
   let questions: [String]?
   let blockers: [String]?
+  let candidateIssues: [String: [String]]?
   let warnings: [String]?
   let changeSetId: UUID?
   var accountId: UUID? = nil
@@ -243,10 +252,10 @@ struct ImportView: View {
     }
   }
   private func needsAttention(_ p: ImportSessionDTO.Extraction.Candidate) -> Bool {
-    (p.symbol ?? "").isEmpty || p.matchStatus == "ambiguous" || (p.quantity == nil && p.marketValue == nil) || (p.currency ?? session?.extraction?.currency) == nil || (p.quantity?.decimal ?? 0) < 0 || (p.marketValue?.decimal ?? 0) < 0
+    !(session?.remainingIssues(for: p).isEmpty ?? true)
   }
   private func derivativeNeedsAttention(_ d: ImportSessionDTO.Extraction.Derivative) -> Bool {
-    d.underlyingSymbol == nil || d.optionType == nil || d.strike == nil || d.expiration == nil || d.currency == nil || (d.quantity == nil && d.marketValue == nil) || (d.strike?.decimal ?? 0) <= 0 || (d.quantity?.decimal ?? 0) < 0 || (d.marketValue?.decimal ?? 0) < 0
+    !(session?.remainingIssues(for: d).isEmpty ?? true)
   }
   private func positionRow(_ p: ImportSessionDTO.Extraction.Candidate) -> some View {
     Button { editor = .position(p) } label: {

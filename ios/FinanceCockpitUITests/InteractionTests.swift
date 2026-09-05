@@ -166,6 +166,31 @@ import XCTest
 }
 
 @MainActor final class ScreenshotWizardTests: XCTestCase {
+  func testUnresolvedFundStaysOpenUntilMatchingChoiceIsSaved() {
+    let app = XCUIApplication()
+    app.launchArguments = ["--ui-fixtures", "--fresh-import", "--unresolved-import"]
+    app.launch()
+    XCTAssertTrue(app.buttons["Add"].waitForExistence(timeout: 15))
+    app.buttons["Add"].tap()
+    app.buttons["Import screenshot"].tap()
+    XCTAssertTrue(app.buttons["Use sample screenshots"].waitForExistence(timeout: 8))
+    app.buttons["Use sample screenshots"].tap()
+    XCTAssertTrue(app.staticTexts["Account & Date"].waitForExistence(timeout: 10))
+    app.buttons["Continue"].tap()
+    app.buttons["Continue"].tap()
+    XCTAssertTrue(app.buttons["Save"].waitForExistence(timeout: 5))
+    app.swipeUp()
+    app.buttons["Save"].tap()
+    XCTAssertTrue(app.staticTexts["Changes saved. Choose the exact investment."].waitForExistence(timeout: 5))
+    app.swipeDown()
+    app.buttons.containing(.staticText, identifier: "iShares Core MSCI World").firstMatch.tap()
+    app.swipeUp()
+    app.buttons["Save"].tap()
+    XCTAssertTrue(app.buttons["Continue"].waitForExistence(timeout: 5))
+    app.buttons["Continue"].tap()
+    XCTAssertTrue(app.buttons["Apply"].waitForExistence(timeout: 5))
+  }
+
   func testReviewEditBackApplyUndoWithLargeText() {
     let app = XCUIApplication()
     app.launchArguments = ["--ui-fixtures", "--fresh-import", "--large-text"]

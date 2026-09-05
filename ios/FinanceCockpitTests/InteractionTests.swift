@@ -261,3 +261,16 @@ struct ImportCorrectionTests {
     #expect(manual["quantity"] == .string("12.5"))
   }
 }
+
+struct ImportReviewLoopTests {
+  @Test func serverIssuesControlWhetherSavedHoldingIsComplete() throws {
+    let row = #"{"candidateId":"abcdefab-1234-4123-8123-abcdefabcdef","name":"Core MSCI World USD (Acc)","marketValue":"2500","currency":"EUR","confidence":1,"matchStatus":"ambiguous","quantitySource":"value_only","sourceLines":1,"sourceCandidateIds":[]}"#
+    func session(issues: String) throws -> ImportSessionDTO {
+      try APIClient.decoder().decode(ImportSessionDTO.self, from: Data("{\"id\":\"abcdefab-1234-4123-8123-abcdefabcdef\",\"status\":\"needs_input\",\"revision\":2,\"candidateIssues\":{\"abcdefab-1234-4123-8123-abcdefabcdef\":\(issues)},\"extraction\":{\"capturedAtInferred\":false,\"positions\":[\(row)],\"derivatives\":[]}}".utf8))
+    }
+    let unresolved = try session(issues: #"["Choose the exact investment."]"#)
+    #expect(!unresolved.remainingIssues(for: unresolved.extraction!.positions[0]).isEmpty)
+    let resolved = try session(issues: "[]")
+    #expect(resolved.remainingIssues(for: resolved.extraction!.positions[0]).isEmpty)
+  }
+}

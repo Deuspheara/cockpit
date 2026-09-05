@@ -131,6 +131,22 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
     expect(
       result.blockers.every((message) => !message.includes("needs a quantity")),
     ).toBe(true);
+    const row = result.extraction!.positions[0]!;
+    expect(row.matchCandidates).toHaveLength(2);
+    expect(result.candidateIssues[row.candidateId!]).not.toEqual([]);
+    const saved = await service.update(created.id, result.revision, {
+      positions: [{ candidateId: row.candidateId! }],
+    });
+    expect(saved.candidateIssues[row.candidateId!]).not.toEqual([]);
+    expect(saved.revision).toBe(result.revision + 1);
+    const selected = row.matchCandidates.find((c) => c.symbol === "EUNL")!;
+    const resolved = await service.update(created.id, saved.revision, {
+      positions: [{ candidateId: row.candidateId!, symbol: selected.symbol, isin: selected.isin, name: selected.name }],
+    });
+    expect(resolved.candidateIssues[row.candidateId!]).toEqual([]);
+    expect(resolved.blockers).toEqual([]);
+    expect(resolved.extraction!.positions[0]!.quantity).toBe("25");
+    await expect(service.prepare(created.id)).resolves.toBeDefined();
   });
   it("accepts uppercase iOS row IDs for both stocks and puts and keeps no-op edits estimated", async () => {
     const { service, model } = setup("125");

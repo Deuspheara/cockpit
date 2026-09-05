@@ -56,6 +56,7 @@
     var importName = "Screenshot account"
     var jobReads = 0
     var importCancelled = false
+    var importUnresolved = ProcessInfo.processInfo.arguments.contains("--unresolved-import")
 
     func encode<T: Encodable>(_ value: T) throws -> Data {
       let encoder = JSONEncoder()
@@ -93,6 +94,7 @@
         if path.hasSuffix("/prepare-change-set") { importPrepared = true; return try encode(importChange()) }
         if request.httpMethod == "PATCH" {
           importRevision += 1
+          if case .array(let rows) = input["positions"], case .object(let row) = rows.first, row["symbol"]?.display == "EUNL" { importUnresolved = false }
           if let name = input["likelyAccountName"] { importName = name.display }
           if case .array(let rows) = input["positions"], case .object(let row) = rows.first, let quantity = row["quantity"] { importQuantity = quantity.display }
         }
@@ -157,8 +159,18 @@
     }
     func importResponse() throws -> Data {
       var result: [String: JSONValue] = ["id": .string(importID.uuidString), "status": .string("ready_for_review"), "revision": .number(Decimal(importRevision)), "blockers": .array([]), "warnings": .array([.string("Quantity estimated from EODHD")]), "processing": .object(importJob()), "changeSetId": importPrepared ? .string(changeID.uuidString) : .null]
+      result["candidateIssues"] = .object([candidateID.uuidString.lowercased(): .array(importUnresolved ? [.string("Choose the exact investment.")] : [])])
       if imported {
         result["extraction"] = .object(["likelyAccountName": .string(importName), "capturedAt": .string("2026-09-01T00:00:00Z"), "capturedAtInferred": .bool(false), "currency": .string("EUR"), "positions": .array([.object(["candidateId": .string(candidateID.uuidString), "symbol": .string("AAPL"), "name": .string("Apple"), "quantity": .string(importQuantity), "marketValue": .string("400"), "currency": .string("EUR"), "confidence": .number(1), "matchStatus": .string("matched"), "quantitySource": .string("estimated"), "sourceLines": .number(1), "sourceCandidateIds": .array([])])]), "derivatives": .array([])])
+      }
+      if importUnresolved, case .object(var extraction) = result["extraction"], case .array(var rows) = extraction["positions"], case .object(var row) = rows[0] {
+        row["symbol"] = .null
+        row["name"] = .string("Core MSCI World USD (Acc)")
+        row["matchStatus"] = .string("ambiguous")
+        row["matchCandidates"] = .array([.object(["symbol": .string("EUNL"), "name": .string("iShares Core MSCI World"), "isin": .string("IE00B4L5Y983"), "exchange": .string("XETRA"), "currency": .string("EUR")])])
+        rows[0] = .object(row)
+        extraction["positions"] = .array(rows)
+        result["extraction"] = .object(extraction)
       }
       return try encode(result)
     }
