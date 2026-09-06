@@ -1,3 +1,4 @@
+import { EVMHistoryService } from "./integrations/alchemy/history.js";
 import { marketHistory } from "./integrations/dydx/market-history.js";
 import { AppError } from "../shared/errors.js";
 import { tradingPerformance } from "./portfolio/history.js";
@@ -75,6 +76,19 @@ export async function registerFinanceRoutes(
       z.object({ name: z.string() }).strict().parse(request.body).name,
     ),
   );
+  const evmHistory = new EVMHistoryService(
+    database,
+    config.ALCHEMY_API_KEY,
+    fetch,
+    config.ALCHEMY_NETWORKS.split(",").map((n) => n.trim()),
+  );
+  app.post("/api/v1/accounts/:id/history-jobs", async (request, reply) =>
+    reply.code(202).send(await evmHistory.enqueue(id(request.params), true)),
+  );
+  app.get("/api/v1/accounts/:id/history-jobs", async (request) => {
+    await accounts.get(id(request.params));
+    return evmHistory.status(id(request.params));
+  });
   app.post("/api/v1/accounts/:id/sync-runs", async (request, reply) =>
     reply.code(202).send(await sync.enqueue(id(request.params))),
   );
@@ -235,6 +249,10 @@ export async function registerFinanceRoutes(
         ),
         range,
       ),
+      historyJob:
+        account.sourceType === "evm_wallet"
+          ? await evmHistory.status(accountId)
+          : null,
       historyStatus: account.metadata.historyStatus ?? null,
       historyError: account.metadata.historyError ?? null,
       activity,

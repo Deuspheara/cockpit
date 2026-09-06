@@ -37,6 +37,16 @@ describe.skipIf(!url)("PostgreSQL device authentication", () => {
   });
   it("protects application routes", async () => {
     expect((await app.inject("/api/v1/session")).statusCode).toBe(401);
+    for (const method of ["GET", "POST"] as const) {
+      expect(
+        (
+          await app.inject({
+            method,
+            url: "/api/v1/accounts/00000000-0000-4000-8000-000000000001/history-jobs",
+          })
+        ).statusCode,
+      ).toBe(401);
+    }
     expect(
       (
         await app.inject({

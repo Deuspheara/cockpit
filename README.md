@@ -98,3 +98,5 @@ Restore only into the intended stopped deployment and an empty database: `docker
 - Paper bots run a scheduled heartbeat with no orders and unknown PnL. No trading strategy, exchange trading endpoint, private key storage or live execution is implemented.
 - No live OpenRouter/Alchemy call was verified because keys were not supplied. Their request/validation flows are tested with deterministic HTTP fixtures.
 - This Mac has Xcode 27 beta. Builds/tests use that compiler with iOS 26 deployment and an installed iOS 26.5 runtime. Stable Xcode release validation, physical-device signing and actual VPS/TLS deployment remain environment checks.
+
+Base wallet pricing recovery, partial charts, historical backfill limits, and the production release procedure are documented in [Base wallet history](docs/base-wallet-history.md).

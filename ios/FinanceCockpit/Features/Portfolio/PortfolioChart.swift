@@ -9,9 +9,12 @@ struct PortfolioValueChart: View {
   @Environment(\.dynamicTypeSize) private var typeSize
   @State private var selectedDate: Date?
   @State private var changeExplanationPresented = false
+  @State private var coverageInspection: CoverageInspection?
 
-  init(dashboard: PortfolioDashboard, range: Binding<PortfolioRange>, initialSelection: Date? = nil, compactEmptyHistory: Bool = false)
-  {
+  init(
+    dashboard: PortfolioDashboard, range: Binding<PortfolioRange>, initialSelection: Date? = nil,
+    compactEmptyHistory: Bool = false
+  ) {
     self.dashboard = dashboard
     self.compactEmptyHistory = compactEmptyHistory
     _range = range
@@ -33,83 +36,105 @@ struct PortfolioValueChart: View {
         .monospacedDigit()
         .lineLimit(1)
         .minimumScaleFactor(0.7)
-        .accessibilityLabel(dashboard.complete ? "Portfolio value" : "Known subtotal")
+        .accessibilityLabel(
+          (selected?.complete ?? dashboard.complete) ? "Portfolio value" : "Known value"
+        )
         .accessibilityValue(
           FinanceFormat.amount(selected?.value ?? dashboard.value, currency: dashboard.currency))
 
       if !compactEmptyHistory || !dashboard.chart.isEmpty {
-      ZStack(alignment: .leading) {
-        Text(
-          (selected?.sourceAt ?? selected?.at ?? dashboard.asOf).formatted(
-            date: .abbreviated, time: .shortened)
-        )
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .opacity(selected == nil ? 0 : 1)
-        .accessibilityHidden(selected == nil)
-        Group {
-          if let change = dashboard.absoluteChange, let percent = dashboard.percentChange {
-            HStack(spacing: 8) {
-              AppIcon(name: change.decimal >= 0 ? .arrowUp : .arrowDown, size: 17)
-              Text(
-                "\(FinanceFormat.amount(change, currency: dashboard.currency)) · \(FinanceFormat.percent(percent))"
-              )
-              Button {
-                changeExplanationPresented.toggle()
-              } label: {
-                AppIcon(name: .info, size: 17)
-                  .frame(width: 44, height: 44)
-                  .contentShape(Rectangle())
-              }
-              .buttonStyle(.plain)
-              .foregroundStyle(.secondary)
-              .accessibilityLabel("About value change")
-              .accessibilityHint("Explains how deposits and withdrawals affect this value")
-              .popover(isPresented: $changeExplanationPresented) {
+        ZStack(alignment: .leading) {
+          Text(
+            (selected?.sourceAt ?? selected?.at ?? dashboard.asOf).formatted(
+              date: .abbreviated, time: .shortened)
+          )
+          .font(.subheadline)
+          .foregroundStyle(.secondary)
+          .opacity(selected == nil ? 0 : 1)
+          .accessibilityHidden(selected == nil)
+          Group {
+            if let change = dashboard.absoluteChange, let percent = dashboard.percentChange {
+              HStack(spacing: 8) {
+                AppIcon(name: change.decimal >= 0 ? .arrowUp : .arrowDown, size: 17)
                 Text(
-                  "Value change includes deposits and withdrawals; it is not investment performance."
+                  "\(FinanceFormat.amount(change, currency: dashboard.currency)) · \(FinanceFormat.percent(percent))"
                 )
-                .font(.callout)
-                .padding()
-                .presentationCompactAdaptation(.popover)
+                Button {
+                  changeExplanationPresented.toggle()
+                } label: {
+                  AppIcon(name: .info, size: 17)
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("About value change")
+                .accessibilityHint("Explains how deposits and withdrawals affect this value")
+                .popover(isPresented: $changeExplanationPresented) {
+                  Text(
+                    "Value change includes deposits and withdrawals; it is not investment performance."
+                  )
+                  .font(.callout)
+                  .padding()
+                  .presentationCompactAdaptation(.popover)
+                }
               }
-            }
-            .font(.subheadline)
-            .foregroundStyle(change.decimal >= 0 ? Color.green : Color.red)
-            .accessibilityElement(children: .combine)
-            .accessibilityLabel(
-              "Value change for \(dashboard.range.title): \(FinanceFormat.amount(change, currency: dashboard.currency)), \(FinanceFormat.percent(percent))"
-            )
-          } else {
-            Text("Period change unavailable")
               .font(.subheadline)
-              .foregroundStyle(.secondary)
+              .foregroundStyle(change.decimal >= 0 ? Color.green : Color.red)
+              .accessibilityElement(children: .combine)
+              .accessibilityLabel(
+                "Value change for \(dashboard.range.title): \(FinanceFormat.amount(change, currency: dashboard.currency)), \(FinanceFormat.percent(percent))"
+              )
+            } else {
+              Text("Period change unavailable")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            }
           }
+          .opacity(selected == nil ? 1 : 0)
+          .allowsHitTesting(selected == nil)
+          .accessibilityHidden(selected != nil)
         }
-        .opacity(selected == nil ? 1 : 0)
-        .allowsHitTesting(selected == nil)
-        .accessibilityHidden(selected != nil)
-      }
-      .frame(minHeight: 44, alignment: .leading)
-      .animation(AppMotion.fade(reduceMotion), value: selected != nil)
-      .accessibilityIdentifier("chart-subtitle")
+        .frame(minHeight: 44, alignment: .leading)
+        .animation(AppMotion.fade(reduceMotion), value: selected != nil)
+        .accessibilityIdentifier("chart-subtitle")
       }
 
-      if !dashboard.complete {
-        HStack(spacing: 6) {
-          AppIcon(name: .warning, size: 16)
-          Text(compactEmptyHistory ? "Partial value · some prices or conversions are missing" : "Known subtotal · some prices or currency conversions are missing")
+      if !(selected?.complete ?? dashboard.complete)
+        || dashboard.chart.contains(where: { $0.complete == false })
+      {
+        Button {
+          coverageInspection = CoverageInspection(
+            issues: selected?.coverage?.missing ?? dashboard.valuationIssues ?? [],
+            title: selected == nil ? "Valuation coverage" : "Coverage at selected date")
+        } label: {
+          Label(
+            !(selected?.complete ?? dashboard.complete)
+              ? "Known value · some holdings are unavailable"
+              : "Partial history · inspect coverage", systemImage: "info.circle"
+          )
+          .font(.caption).multilineTextAlignment(.leading).frame(minHeight: 44)
         }
-        .font(.caption)
-        .foregroundStyle(compactEmptyHistory ? Color.secondary : Color.orange)
-        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("valuation-coverage")
+      }
+      if dashboard.historyStatus == "loading" {
+        ProgressView("Recovering historical values…").font(.caption)
+      } else if dashboard.historyStatus == "paused" {
+        Text("History recovery paused · see account for details").font(.caption).foregroundStyle(
+          .secondary)
+      } else if dashboard.historyStatus == "failed" {
+        Text("History recovery needs attention · open the account to retry").font(.caption)
+          .foregroundStyle(.secondary)
       }
 
       Group {
         if dashboard.chart.isEmpty {
           VStack(alignment: .leading, spacing: 4) {
-            Text(compactEmptyHistory ? "History is building" : "No history for this period")
-              .font(.subheadline.weight(.medium))
+            Text(
+              dashboard.historyStatus == "loading"
+                ? "History is loading" : "No recorded values for this period"
+            )
+            .font(.subheadline.weight(.medium))
             if compactEmptyHistory {
               Text("No recorded values in this period yet.").font(.caption)
             }
@@ -120,19 +145,18 @@ struct PortfolioValueChart: View {
         } else {
           Chart {
             ForEach(dashboard.chart) { point in
-              if dashboard.chart.count == 1 {
-                PointMark(
-                  x: .value("Date", point.at),
-                  y: .value("Value", NSDecimalNumber(decimal: point.value.decimal).doubleValue)
-                )
-                .foregroundStyle(Color.accentColor)
-                .symbolSize(45)
-              }
-              LineMark(
+              PointMark(
                 x: .value("Date", point.at),
                 y: .value("Value", NSDecimalNumber(decimal: point.value.decimal).doubleValue)
               )
-              .interpolationMethod(.monotone)
+              .foregroundStyle(Color.accentColor)
+              .symbolSize(30)
+              LineMark(
+                x: .value("Date", point.at),
+                y: .value("Value", NSDecimalNumber(decimal: point.value.decimal).doubleValue),
+                series: .value("Coverage", point.segmentId ?? "complete")
+              )
+              .interpolationMethod(.linear)
               .foregroundStyle(Color.accentColor)
               .lineStyle(StrokeStyle(lineWidth: 2))
               .accessibilityLabel(point.at.formatted(date: .abbreviated, time: .omitted))
@@ -165,6 +189,11 @@ struct PortfolioValueChart: View {
       .accessibilityIdentifier("portfolio-chart-plot")
 
       ChartRangePicker(selection: $range)
+    }
+    .sheet(item: $coverageInspection) { inspection in
+      NavigationStack {
+        ValuationIssuesView(issues: inspection.issues).navigationTitle(inspection.title)
+      }
     }
     .onChange(of: range) { selectedDate = nil }
     .onChange(of: dashboard.scope) { selectedDate = nil }
@@ -249,5 +278,73 @@ struct PortfolioScopePicker: View {
       }
     }
     .scrollIndicators(.hidden)
+  }
+}
+
+private struct CoverageInspection: Identifiable {
+  let id = UUID()
+  let issues: [ValuationIssue]
+  let title: String
+}
+struct ValuationIssuesView: View {
+  let issues: [ValuationIssue]
+  @Environment(AppEnvironment.self) private var environment
+  @Environment(\.dismiss) private var dismiss
+  @State private var retrying = false
+  @State private var result: String?
+  var body: some View {
+    List {
+      Text(
+        "Unknown values are excluded from the known value. Chart lines break when coverage changes. Select a chart date to inspect its missing values."
+      )
+      .font(.callout).foregroundStyle(.secondary)
+      ForEach(Array(issues.enumerated()), id: \.offset) { _, issue in
+        VStack(alignment: .leading, spacing: 6) {
+          Text(issue.name).font(.headline)
+          if let network = issue.network {
+            Text(network).font(.caption).foregroundStyle(.secondary)
+          }
+          if let contract = issue.contractAddress {
+            Text(contract).font(.caption2).textSelection(.enabled)
+          }
+          Text(issue.message).font(.callout)
+          if let date = issue.quotedAt { Text("Last quote: " + date.formatted()).font(.caption) }
+          if issue.retryable {
+            Button(
+              issue.code == "missing_fx"
+                ? "Refresh currency conversions"
+                : issue.retryAction == "history" ? "Retry historical data" : "Retry account data"
+            ) {
+              Task { await retry(issue) }
+            }.disabled(retrying)
+          }
+        }
+      }
+      if issues.isEmpty {
+        Text(
+          "Current values are complete. Select an earlier chart point to inspect historical coverage."
+        )
+      }
+      if let result { Text(result).font(.caption) }
+    }.toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+  }
+  private func retry(_ issue: ValuationIssue) async {
+    guard let api = environment.api else { return }
+    retrying = true
+    defer { retrying = false }
+    do {
+      let path: String
+      if issue.code == "missing_fx" {
+        path = "fx/refresh"
+      } else if let account = issue.accountId {
+        path =
+          "accounts/\(account)/" + (issue.retryAction == "history" ? "history-jobs" : "sync-runs")
+      } else {
+        return
+      }
+      let _: JSONValue = try await api.send(path, method: "POST")
+      result = "Refresh requested. Values will update when it finishes."
+      environment.dataRevision += 1
+    } catch { result = error.localizedDescription }
   }
 }

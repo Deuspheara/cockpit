@@ -79,8 +79,11 @@ describe.skipIf(!url)("real-account history and demo isolation", () => {
     expect(
       (await portfolio.dashboard("global", "1m", "EUR", realId)).chart,
     ).toHaveLength(1);
-    // A missing account is never silently treated as zero in the global history.
-    expect((await portfolio.dashboard("global", "1m")).chart).toHaveLength(0);
+    // A missing account is explicit coverage, not a silently assumed zero.
+    const global = await portfolio.dashboard("global", "1m");
+    expect(global.chart).toHaveLength(1);
+    expect(global.chart[0]?.complete).toBe(false);
+    expect(global.chart[0]?.coverage.missing[0]?.code).toBe("missing_history");
   });
   it("converts provider history using only a dated prior FX rate", async () => {
     const at = new Date(Date.now() - 2 * 86400000);

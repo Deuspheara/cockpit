@@ -1,3 +1,4 @@
+import { EVMHistoryService } from "./modules/integrations/alchemy/history.js";
 import { BotService } from "./modules/bots/service.js";
 import { SyncService } from "./modules/integrations/service.js";
 import { FXService } from "./modules/integrations/fx.js";
@@ -15,6 +16,13 @@ const recurring = new RecurringService(database),
 const sync = new SyncService(database, cache, config),
   fx = new FXService(database),
   bots = new BotService(database);
+const evmHistory = new EVMHistoryService(
+  database,
+  config.ALCHEMY_API_KEY,
+  fetch,
+  config.ALCHEMY_NETWORKS.split(",").map((n) => n.trim()),
+);
+let historyTask: Promise<void> | undefined;
 let stopping = false,
   lastRecurringDay = "",
   lastValuationSlot = -1,
@@ -28,6 +36,22 @@ for (const signal of ["SIGINT", "SIGTERM"])
 while (!stopping) {
   try {
     await database.sql`INSERT INTO worker_heartbeat(id,seen_at) VALUES(1,now()) ON CONFLICT(id) DO UPDATE SET seen_at=excluded.seen_at`;
+    if (!historyTask)
+      historyTask = evmHistory
+        .runDue()
+        .then(async (changed) => {
+          if (changed) {
+            try {
+              await cache.incr("portfolio:revision");
+            } catch {}
+          }
+        })
+        .catch(() => {
+          console.error("Historical reconstruction worker failed; will retry");
+        })
+        .finally(() => {
+          historyTask = undefined;
+        });
     await sync.runQueued();
     await bots.runDue();
     const day = new Date().toISOString().slice(0, 10);
@@ -73,5 +97,6 @@ while (!stopping) {
   }
   await new Promise((resolve) => setTimeout(resolve, 5000));
 }
+await historyTask;
 if (cache.isOpen) cache.destroy();
 await database.close();

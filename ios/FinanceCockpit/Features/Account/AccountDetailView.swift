@@ -15,7 +15,8 @@ struct AccountDetailView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         if let detail {
-          Text(accountSourceTitle(detail.account.sourceType)).font(.subheadline).foregroundStyle(.secondary)
+          Text(accountSourceTitle(detail.account.sourceType)).font(.subheadline).foregroundStyle(
+            .secondary)
           if detail.performance != nil {
             Picker("Chart", selection: $chartMetric) {
               Text("Account equity").tag("Equity")
@@ -27,11 +28,15 @@ struct AccountDetailView: View {
               TradingPerformanceView(
                 performance: performance, range: $range, displayedRange: detail.dashboard.range)
             } else {
-              PortfolioValueChart(dashboard: detail.dashboard, range: $range, compactEmptyHistory: true)
+              PortfolioValueChart(
+                dashboard: detail.dashboard, range: $range, compactEmptyHistory: true)
             }
           }.modifier(DatasetTransition(key: chartMetric))
           if detail.account.sourceType != "manual" {
             AccountSyncStatusView(accountID: accountID)
+          }
+          if detail.account.sourceType == "evm_wallet" {
+            EVMHistoryStatusView(accountID: accountID, job: detail.historyJob)
           }
           if let summary = detail.derivatives { DerivativesSummaryView(summary: summary) }
           if let historyError = detail.historyError {
@@ -96,7 +101,9 @@ struct AccountDetailView: View {
                 Text("Unrealized PnL: \(FinanceFormat.amount(pnl, currency: position.currency))")
                   .font(.caption).foregroundStyle(pnl.decimal >= 0 ? Color.green : Color.red)
               }
-              if position.costBasis == nil && position.unrealizedPnl == nil && detail.account.sourceType != "evm_wallet" {
+              if position.costBasis == nil && position.unrealizedPnl == nil
+                && detail.account.sourceType != "evm_wallet"
+              {
                 Text("Return unavailable · incomplete cost basis").font(.caption).foregroundStyle(
                   .secondary)
               }
@@ -223,8 +230,12 @@ struct AccountSyncStatusView: View {
               VStack(alignment: .leading, spacing: 3) {
                 Text(run.status == "failed" ? "Sync needs another try" : "Balances updated")
                   .font(.subheadline.weight(.medium))
-                Text(run.status == "failed" ? "Your saved holdings are still available." : "Some values or networks are incomplete.")
-                  .font(.caption).foregroundStyle(.secondary)
+                Text(
+                  run.status == "failed"
+                    ? "Your saved holdings are still available."
+                    : "Some values or networks are incomplete."
+                )
+                .font(.caption).foregroundStyle(.secondary)
               }
             }
           }.tint(.secondary).accessibilityIdentifier("account-sync-details")
@@ -251,20 +262,27 @@ struct AccountSyncStatusView: View {
             run = latest
             error = nil
           }
-          if previous != run?.status && (run?.status == "success" || run?.status == "partial") { environment.dataRevision += 1 }
+          if previous != run?.status && (run?.status == "success" || run?.status == "partial") {
+            environment.dataRevision += 1
+          }
           try await Task.sleep(for: .seconds(3))
-        } catch { if !Task.isCancelled { self.error = error.localizedDescription }; return }
+        } catch {
+          if !Task.isCancelled { self.error = error.localizedDescription }
+          return
+        }
       }
     }
   }
   private func retry() async {
     retrying = true
     defer { retrying = false }
-    do { run = try await environment.api?.send("accounts/\(accountID)/sync-runs", method: "POST"); error = nil; pollGeneration += 1 }
-    catch { self.error = error.localizedDescription }
+    do {
+      run = try await environment.api?.send("accounts/\(accountID)/sync-runs", method: "POST")
+      error = nil
+      pollGeneration += 1
+    } catch { self.error = error.localizedDescription }
   }
 }
-
 
 private func accountSourceTitle(_ source: String) -> String {
   switch source {
@@ -273,5 +291,50 @@ private func accountSourceTitle(_ source: String) -> String {
   case "dydx": "dYdX"
   case "hyperliquid": "Hyperliquid"
   default: source.replacingOccurrences(of: "_", with: " ").capitalized
+  }
+}
+
+private struct EVMHistoryStatusView: View {
+  let accountID: UUID
+  let job: EVMHistoryJob?
+  @Environment(AppEnvironment.self) private var environment
+  @State private var requesting = false
+  @State private var error: String?
+  var body: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("Base history").font(.headline)
+      if let job {
+        Text("\(job.daysDone) of \(job.totalDays) daily values processed").font(.subheadline)
+        if ["queued", "running"].contains(job.status) {
+          ProgressView(
+            job.phase == "discovery"
+              ? "Discovering past holdings" : "Recovering balances and prices")
+        }
+        if let message = job.error { Text(message).font(.caption).foregroundStyle(.secondary) }
+        if job.status == "paused" {
+          Text("Resumes \(job.nextAttemptAt.formatted())").font(.caption)
+        }
+        Text("\(job.requestsUsed) / \(job.dailyRequestLimit) requests today").font(.caption)
+          .foregroundStyle(.secondary)
+      }
+      Text(
+        "Daily values for the last 90 days. Other networks and unavailable token data remain explicit gaps."
+      )
+      .font(.caption).foregroundStyle(.secondary)
+      if job == nil || ["failed", "partial"].contains(job?.status ?? "") {
+        Button(job == nil ? "Recover history" : "Retry missing history") {
+          Task {
+            requesting = true
+            defer { requesting = false }
+            do {
+              let _: JSONValue? = try await environment.api?.send(
+                "accounts/\(accountID)/history-jobs", method: "POST")
+              environment.dataRevision += 1
+            } catch { self.error = error.localizedDescription }
+          }
+        }.disabled(requesting).accessibilityIdentifier("recover-base-history")
+      }
+      if let error { Text(error).font(.caption).foregroundStyle(.red) }
+    }
   }
 }

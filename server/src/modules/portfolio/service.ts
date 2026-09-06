@@ -1,5 +1,5 @@
-import { sampleChart } from "./sampling.js";
-import { providerHistory } from "./history.js";
+import { valuationHistory } from "./valuation-history.js";
+import type { ValuationIssue } from "./coverage.js";
 import { visibleAccounts } from "../accounts/visibility.js";
 import type { Sql, TransactionSql } from "postgres";
 import { Decimal, money, type DecimalString } from "../../shared/decimal.js";
@@ -166,6 +166,16 @@ export class PortfolioService {
               86400000);
         positions.push({
           assetId: asset.id,
+          priceIssue:
+            typeof observed?.metadata.priceIssue === "string"
+              ? observed.metadata.priceIssue
+              : undefined,
+          network: asset.chain ?? undefined,
+          contractAddress: asset.contractAddress ?? undefined,
+          priceQuotedAt:
+            typeof observed?.metadata.priceQuotedAt === "string"
+              ? observed.metadata.priceQuotedAt
+              : quote?.quotedAt.toISOString(),
           symbol: asset.symbol,
           name: asset.name,
           assetType: asset.assetType,
@@ -254,8 +264,69 @@ export class PortfolioService {
         lines.length > 0 ||
         sync?.status === "success" ||
         a.metadata.demo === true;
+      const balanceComplete =
+        a.sourceType !== "evm_wallet"
+          ? sync?.status !== "partial"
+          : Array.isArray(a.metadata.balanceCoverage) &&
+              Array.isArray(a.metadata.configuredNetworks)
+            ? a.metadata.configuredNetworks.every((n) =>
+                (a.metadata.balanceCoverage as unknown[]).includes(n),
+              )
+            : sync?.status === "success";
+      const valuationIssues: ValuationIssue[] = lines
+        .filter((p) => convert(p) === undefined)
+        .map((p) => ({
+          code: p.marketValue === undefined ? "missing_price" : "missing_fx",
+          accountId: a.id,
+          assetId: p.assetId,
+          name: p.name,
+          network: p.network,
+          contractAddress: p.contractAddress,
+          quotedAt: p.priceQuotedAt,
+          message:
+            p.marketValue === undefined
+              ? (p.priceIssue ??
+                "No usable price is available for this holding")
+              : `No recent ${p.currency}/${currency} conversion is available`,
+          retryable: true,
+        }));
+      if (!hasObservation || !balanceComplete)
+        valuationIssues.push({
+          code: "missing_balance",
+          accountId: a.id,
+          name: a.name,
+          message:
+            "Some network balances are unavailable; retained holdings may be incomplete",
+          retryable: true,
+        });
+      if (Array.isArray(a.metadata.balanceIssues))
+        for (const issue of a.metadata.balanceIssues) {
+          if (
+            issue &&
+            typeof issue === "object" &&
+            typeof issue.name === "string"
+          )
+            valuationIssues.push({
+              code: "missing_balance",
+              accountId: a.id,
+              name: issue.name,
+              network: issue.network,
+              contractAddress: issue.contractAddress,
+              message: issue.message,
+              retryable: true,
+            });
+        }
+      if (sync?.status === "failed")
+        valuationIssues.push({
+          code: "provider_failure",
+          accountId: a.id,
+          name: a.name,
+          message: sync.errorMessage ?? "Provider synchronization failed",
+          retryable: true,
+        });
       const complete =
         hasObservation &&
+        balanceComplete &&
         lines.every((p) => convert(p) !== undefined) &&
         !(sync?.status === "partial" && lines.length === 0);
       const value = money(
@@ -278,45 +349,53 @@ export class PortfolioService {
           !hasObservation ||
           lines.some((p) => p.stale) ||
           sync?.status === "failed" ||
-          sync?.status === "partial",
+          (sync?.status === "partial" && !balanceComplete),
         syncStatus: sync?.status,
         syncError: sync?.errorMessage,
+        valuationIssues,
+        balanceComplete,
+        hasKnownValue:
+          (hasObservation && balanceComplete && lines.length === 0) ||
+          lines.some((p) => convert(p) !== undefined),
+        coverage: {
+          valued: lines
+            .filter((p) => convert(p) !== undefined)
+            .map((p) => p.assetId),
+          missing: valuationIssues,
+        },
         unvaluedPositions: lines.filter((p) => convert(p) === undefined).length,
       };
     });
     const since = new Date(Date.now() - rangeDays[range] * 86400000);
     const ids = accounts.map((a) => a.id);
-    const history = ids.length
-      ? await this.database.sql<
-          { at: Date; value: string; count: number }[]
-        >`SELECT b.captured_at AS at,sum(v.total_value)::text AS value,count(*)::integer AS count FROM valuation_batches b JOIN account_valuations v ON v.batch_id=b.id WHERE v.account_id IN ${this.database.sql(ids)} AND b.base_currency=${currency} AND b.captured_at>=${since} GROUP BY b.id ORDER BY b.captured_at`
-      : [];
-    const snapshots = history
-      .filter((p) => p.count === ids.length)
-      .map((p) => ({ at: p.at.toISOString(), value: money(p.value) }));
-    const observedHistory = await providerHistory(
+    const chart = await valuationHistory(
       this.database.sql,
-      ids,
+      accounts,
       since,
       currency,
+      range,
     );
-    // Actual provider history takes precedence when both sources share a timestamp.
-    const rawChart = [
-      ...new Map(
-        [
-          ...snapshots.map((p) => ({ ...p, source: "recorded_snapshot" })),
-          ...observedHistory,
-        ].map((p) => [p.at, p]),
-      ).values(),
-    ].sort((a, b) => a.at.localeCompare(b.at));
-    const chart = sampleChart(rawChart, range);
+    const jobs = ids.length
+      ? await this.database.sql<
+          {
+            accountId: string;
+            status: string;
+            daysDone: number;
+            error: string | null;
+            nextAttemptAt: Date;
+          }[]
+        >`SELECT account_id,status,days_done,error,next_attempt_at FROM evm_history_jobs WHERE account_id IN ${this.database.sql(ids)}`
+      : [];
     const value = money(
       rows.reduce((sum, a) => sum.plus(a.value), new Decimal(0)),
     );
     const complete = rows.every((a) => a.complete);
     const first = chart[0];
     const absoluteChange =
-      complete && first
+      complete &&
+      first &&
+      chart.every((p) => p.complete) &&
+      new Set(chart.map((p) => p.segmentId)).size === 1
         ? money(new Decimal(value).minus(first.value))
         : undefined;
     const percentChange =
@@ -368,6 +447,19 @@ export class PortfolioService {
         })),
       chart,
       allocation,
+      valuationIssues: rows.flatMap((a) => a.valuationIssues),
+      historyStatus: jobs.some((j) => ["queued", "running"].includes(j.status))
+        ? "loading"
+        : jobs.some((j) => j.status === "paused")
+          ? "paused"
+          : jobs.some((j) => j.status === "failed")
+            ? "failed"
+            : chart.some((p) => !p.complete)
+              ? "partial"
+              : chart.length
+                ? "available"
+                : "empty",
+      historyJobs: jobs,
       accounts: rows,
     };
   }

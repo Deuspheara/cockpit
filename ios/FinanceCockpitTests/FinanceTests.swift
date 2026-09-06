@@ -4,6 +4,18 @@ import Testing
 @testable import FinanceCockpit
 
 struct FinanceTests {
+  @Test func decodesPartialHistoryAndKeepsLegacyPointsCompatible() throws {
+    let legacy = Data(#"{"at":"2026-09-01T00:00:00Z","value":"12.34"}"#.utf8)
+    #expect(try APIClient.decoder().decode(ValuationPoint.self, from: legacy).complete == nil)
+    let partial = Data(
+      #"{"at":"2026-09-01T00:00:00Z","value":"12.34","complete":false,"segmentId":"2","coverage":{"valued":["ETH"],"missing":[{"code":"missing_price","name":"Token","network":"base-mainnet","message":"Unavailable","retryable":true,"retryAction":"history"}]}}"#
+        .utf8)
+    let point = try APIClient.decoder().decode(ValuationPoint.self, from: partial)
+    #expect(point.complete == false)
+    #expect(point.segmentId == "2")
+    #expect(point.coverage?.missing.first?.retryAction == "history")
+  }
+
   @Test func decimalDTORequiresStrings() throws {
     let amount = try JSONDecoder().decode(Amount.self, from: Data("\"0.100000000000000001\"".utf8))
     #expect(amount.decimal == Decimal(string: "0.100000000000000001"))

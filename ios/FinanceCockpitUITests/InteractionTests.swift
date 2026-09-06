@@ -30,6 +30,26 @@ import XCTest
     capture.lifetime = .keepAlways
     add(capture)
   }
+  func testPartialBaseHistoryCoverageAndRetry() {
+    let app = launch(["--wallet-layout", "--partial-history"])
+    XCTAssertTrue(app.buttons["valuation-coverage"].waitForExistence(timeout: 5))
+    capture("Partial Base chart", app)
+    app.buttons["valuation-coverage"].tap()
+    XCTAssertTrue(app.staticTexts["Unpriced Base token"].waitForExistence(timeout: 5))
+    XCTAssertTrue(app.staticTexts["base-mainnet"].exists)
+    capture("Missing token diagnostics", app)
+    app.buttons["Done"].tap()
+    let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "portfolio-account-")).firstMatch
+    reveal(row, app)
+    row.tap()
+    let retry = app.buttons["recover-base-history"]
+    reveal(retry, app)
+    XCTAssertTrue(retry.waitForExistence(timeout: 5))
+    retry.tap()
+    XCTAssertTrue(app.staticTexts["Recovering balances and prices"].waitForExistence(timeout: 8))
+    capture("Base backfill progress", app)
+  }
+
   func testChartScrubbingAndRangeChangesKeepLayout() {
     let app = launch()
     let picker = app.buttons["1M"]

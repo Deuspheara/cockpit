@@ -1,3 +1,4 @@
+import { AlchemyPrices, usdQuote } from "./prices.js";
 import { z } from "zod";
 import { Decimal, money } from "../../../shared/decimal.js";
 import { AppError } from "../../../shared/errors.js";
@@ -13,7 +14,10 @@ const networkSchema = z.enum(["eth-mainnet", "base-mainnet", "arb-mainnet"]);
 // Balances are independent of optional metadata and pricing enrichment.
 const tokenSchema = z.object({
   network: networkSchema,
-  tokenAddress: z.string().nullable(),
+  tokenAddress: z
+    .string()
+    .regex(/^0x[0-9a-fA-F]{40}$/)
+    .nullable(),
   tokenBalance: z.string().regex(/^0x[0-9a-fA-F]+$/),
   tokenMetadata: z.unknown().optional(),
   tokenPrices: z.unknown().optional(),
@@ -23,11 +27,6 @@ const metadataSchema = z.object({
   decimals: z.number().int().min(0).max(36).nullish(),
   name: z.string().nullish(),
   symbol: z.string().nullish(),
-});
-const priceSchema = z.object({
-  currency: z.string(),
-  value: providerDecimal.refine((value) => new Decimal(value).gte(0)),
-  lastUpdatedAt: z.iso.datetime({ offset: true }),
 });
 const responseSchema = z.object({
   data: z.object({
@@ -66,11 +65,14 @@ function failureFor(error: unknown) {
 }
 export class AlchemyPortfolioAdapter {
   readonly kind = "evm_wallet";
+  private prices: AlchemyPrices;
   constructor(
     private apiKey: string,
     private networks: string[],
     private transport: Fetch = fetch,
-  ) {}
+  ) {
+    this.prices = new AlchemyPrices(apiKey, transport);
+  }
   async syncAccount(account: Account): Promise<ProviderSyncResult> {
     if (!this.apiKey)
       throw new AppError(
@@ -102,6 +104,12 @@ export class AlchemyPortfolioAdapter {
         let pageKey: string | undefined;
         let complete = true;
         const warnings = new Set<string>();
+        const balanceIssues: {
+          name: string;
+          network: string;
+          contractAddress?: string;
+          message: string;
+        }[] = [];
         let failure: ReturnType<typeof failureFor> | undefined;
         try {
           for (let page = 0; page < 20; page++) {
@@ -150,6 +158,17 @@ export class AlchemyPortfolioAdapter {
                   ? metadata.data.decimals
                   : null;
               if (decimals == null) {
+                balanceIssues.push({
+                  name: metadata.success
+                    ? metadata.data.name ||
+                      token.tokenAddress ||
+                      "Unknown token"
+                    : token.tokenAddress || "Unknown token",
+                  network,
+                  contractAddress: token.tokenAddress ?? undefined,
+                  message:
+                    "Token decimals unavailable; balance cannot be interpreted",
+                });
                 complete = false;
                 warnings.add(
                   "Some token decimals are unavailable; last known positions retained",
@@ -161,16 +180,7 @@ export class AlchemyPortfolioAdapter {
                   new Decimal(10).pow(decimals),
                 ),
               );
-              const price = (
-                Array.isArray(token.tokenPrices) ? token.tokenPrices : []
-              )
-                .map((value) => priceSchema.safeParse(value))
-                .find(
-                  (value) =>
-                    value.success &&
-                    value.data.currency.toLowerCase() === "usd",
-                );
-              const quote = price?.success ? price.data : undefined;
+              const quote = usdQuote(token.tokenPrices);
               if (!quote)
                 warnings.add(
                   "Some token prices are unavailable; balances synchronized without valuation",
@@ -209,7 +219,13 @@ export class AlchemyPortfolioAdapter {
             }
             pageKey = response.data.pageKey ?? undefined;
             if (!pageKey)
-              return { positions, complete, warnings: [...warnings], failure };
+              return {
+                positions,
+                complete,
+                warnings: [...warnings],
+                failure,
+                balanceIssues,
+              };
           }
           complete = false;
           warnings.add(
@@ -220,14 +236,22 @@ export class AlchemyPortfolioAdapter {
           failure = failureFor(error);
           warnings.add(failure.message);
         }
-        return { positions, complete, warnings: [...warnings], failure };
+        return {
+          positions,
+          complete,
+          warnings: [...warnings],
+          failure,
+          balanceIssues,
+        };
       }),
     );
     const result = emptySync();
+    const balanceIssues: unknown[] = [];
     results.forEach((response, index) => {
       const network = networks[index]!;
       if (response.status === "fulfilled") {
         result.positions.push(...response.value.positions);
+        balanceIssues.push(...response.value.balanceIssues);
         if (response.value.complete) result.coveredScopes.push(network);
         result.warnings.push(
           ...response.value.warnings.map((message) => `${network}: ${message}`),
@@ -246,6 +270,26 @@ export class AlchemyPortfolioAdapter {
           "Alchemy responded, but no usable balances were available. Retry synchronization.",
         retryable: true,
       };
+    await this.prices.enrich(result.positions);
+    result.warnings = result.warnings.filter(
+      (w) => !w.includes("Some token prices are unavailable"),
+    );
+    for (const network of networks) {
+      if (
+        result.positions.some(
+          (p) => p.scope === network && p.unitPrice === undefined,
+        )
+      )
+        result.warnings.push(
+          `${network}: Some token prices are unavailable; balances synchronized without valuation`,
+        );
+    }
+    result.metadata = {
+      ...result.metadata,
+      balanceCoverage: result.coveredScopes,
+      configuredNetworks: networks,
+      balanceIssues,
+    };
     return result;
   }
 }

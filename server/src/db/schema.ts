@@ -249,6 +249,8 @@ export const valuationBatches = pgTable("valuation_batches", {
     .defaultNow(),
 });
 export const accountValuations = pgTable("account_valuations", {
+  complete: boolean("complete").notNull().default(true),
+  coverage: jsonb("coverage").notNull().default({}),
   batchId: uuid("batch_id").notNull(),
   accountId: uuid("account_id").notNull(),
   totalValue: numeric("total_value", { precision: 38, scale: 18 }).notNull(),

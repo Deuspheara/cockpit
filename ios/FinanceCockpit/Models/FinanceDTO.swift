@@ -55,12 +55,17 @@ struct PortfolioDashboard: Codable, Sendable {
   let chart: [ValuationPoint]
   let allocation: [Allocation]
   let accounts: [AccountRow]
+  var valuationIssues: [ValuationIssue]? = nil
+  var historyStatus: String? = nil
 }
 struct ValuationPoint: Codable, Identifiable, Sendable {
   var id: Date { at }
   let at: Date
   var sourceAt: Date? = nil
   let value: Amount
+  var complete: Bool? = nil
+  var segmentId: String? = nil
+  var coverage: ValuationCoverage? = nil
 }
 struct Allocation: Codable, Identifiable, Sendable {
   var id: String { key }
@@ -145,6 +150,7 @@ struct AccountDetail: Codable, Sendable {
   var performance: TradingPerformance? = nil
   var historyStatus: String? = nil
   var historyError: String? = nil
+  var historyJob: EVMHistoryJob? = nil
 }
 struct DerivativesSummary: Codable, Sendable {
   let equity: Amount
@@ -243,4 +249,31 @@ indirect enum JSONValue: Codable, Sendable, Equatable {
     case .array, .object: "Structured data"
     }
   }
+}
+
+struct ValuationIssue: Codable, Sendable {
+  let code: String
+  var accountId: UUID? = nil
+  var assetId: UUID? = nil
+  let name: String
+  var network: String? = nil
+  var contractAddress: String? = nil
+  var quotedAt: Date? = nil
+  let message: String
+  let retryable: Bool
+  var retryAction: String? = nil
+}
+struct ValuationCoverage: Codable, Sendable {
+  let valued: [String]
+  let missing: [ValuationIssue]
+}
+struct EVMHistoryJob: Codable, Sendable {
+  let status: String
+  let phase: String
+  let daysDone: Int
+  let totalDays: Int
+  let requestsUsed: Int
+  let dailyRequestLimit: Int
+  let nextAttemptAt: Date
+  let error: String?
 }

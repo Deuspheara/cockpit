@@ -36,6 +36,10 @@ export function ledgerCost(
   return money(cost);
 }
 export interface PositionView {
+  network?: string;
+  contractAddress?: string;
+  priceQuotedAt?: string;
+  priceIssue?: string;
   assetId: string;
   symbol: string;
   name: string;

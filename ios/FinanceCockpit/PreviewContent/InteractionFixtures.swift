@@ -47,6 +47,7 @@
     var observation: [String: JSONValue] = [:]
     var changeID = UUID()
     var applied = false
+    var historyRetried = false
     let importID = UUID()
     let candidateID = UUID()
     let jobID = UUID()
@@ -150,6 +151,10 @@
         if path.hasSuffix("/apply") { applied = true }
         return try encode(change())
       }
+      if path.hasSuffix("/history-jobs") {
+        historyRetried = true
+        return try encode(["status": "queued"])
+      }
       if path == "portfolio/dashboard" { return try encode(dashboard(range: range, scope: scope)) }
       if path.hasSuffix("/detail") {
         let id = path.split(separator: "/")[1]
@@ -159,7 +164,7 @@
             account: account, dashboard: dashboard(range: range, scope: scope), positions: ProcessInfo.processInfo.arguments.contains("--wallet-layout") ? [
               Position(assetId: candidateID, symbol: "ETH", name: "Ethereum", assetType: "crypto", quantity: Amount(0.12), price: nil, marketValue: Amount(503.45), currency: "USD", costBasis: nil, unrealizedPnl: nil, source: "evm_wallet", observedAt: Date(), stale: false, side: nil)
             ] : [],
-            activity: []))
+            activity: [], historyJob: ProcessInfo.processInfo.arguments.contains("--partial-history") ? EVMHistoryJob(status: historyRetried ? "queued" : "partial", phase: "balances", daysDone: 30, totalDays: 90, requestsUsed: 125, dailyRequestLimit: 1000, nextAttemptAt: Date(), error: historyRetried ? nil : "Some historical token prices remain unavailable") : nil))
       }
       if path == "portfolio/assets" || path == "activity" { return Data("[]".utf8) }
       throw APIError(message: "No UI fixture for \(path)")
@@ -200,17 +205,23 @@
     func dashboard(range: PortfolioRange, scope: PortfolioScope) -> PortfolioDashboard {
       let base = PortfolioDashboard.preview
       let wallet = ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+      let partial = ProcessInfo.processInfo.arguments.contains("--partial-history")
+      let issue = ValuationIssue(code: "missing_price", accountId: initial.id, name: "Unpriced Base token", network: "base-mainnet", contractAddress: "0x" + String(repeating: "b", count: 40), message: "No usable price is available for this holding", retryable: true)
       let points = wallet ? [] : range == .day ? Array(base.chart.suffix(1)) : range == .week ? [] : base.chart
       return PortfolioDashboard(
         scope: scope, range: range, currency: "EUR", value: wallet ? Amount(433.19) : base.value,
         complete: !wallet, absoluteChange: wallet ? nil : base.absoluteChange, percentChange: wallet ? nil : base.percentChange,
-        asOf: base.asOf, chart: points, allocation: base.allocation,
+        asOf: base.asOf, chart: partial ? [
+          ValuationPoint(at: Date().addingTimeInterval(-86400 * 2), value: Amount(400), complete: false, segmentId: "1", coverage: ValuationCoverage(valued: ["ETH"], missing: [issue])),
+          ValuationPoint(at: Date().addingTimeInterval(-86400), value: Amount(430), complete: false, segmentId: "1", coverage: ValuationCoverage(valued: ["ETH"], missing: [issue])),
+          ValuationPoint(at: Date(), value: Amount(435), complete: true, segmentId: "2", coverage: ValuationCoverage(valued: ["ETH", "TOKEN"], missing: []))
+        ] : points, allocation: base.allocation,
         accounts: ([initial] + accounts).map {
           AccountRow(
             id: $0.id, name: $0.name, assetClass: $0.assetClass, sourceType: $0.sourceType,
             value: base.value,
-            complete: true, asOf: base.asOf, stale: false, unvaluedPositions: 0)
-        })
+            complete: !partial, asOf: base.asOf, stale: false, unvaluedPositions: partial ? 1 : 0)
+        }, valuationIssues: partial ? [issue] : nil, historyStatus: partial ? "partial" : nil)
     }
   }
 #endif
