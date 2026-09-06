@@ -27,7 +27,10 @@ export function ledgerCost(
     const q = new Decimal(t.quantity);
     if (t.type === "BUY" && t.unitPrice != null) {
       quantity = quantity.plus(q);
-      cost = cost.plus(q.mul(t.unitPrice)).plus(t.feeAmount ?? 0);
+      cost = cost
+        .plus(q.mul(t.unitPrice))
+        .plus(t.feeAmount ?? 0)
+        .plus(t.taxAmount ?? 0);
     } else if (t.type === "SELL" && quantity.gte(q) && quantity.gt(0)) {
       cost = cost.mul(quantity.minus(q)).div(quantity);
       quantity = quantity.minus(q);

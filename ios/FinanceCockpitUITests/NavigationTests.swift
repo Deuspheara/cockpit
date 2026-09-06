@@ -95,13 +95,14 @@ final class NavigationTests: XCTestCase {
     portfolioCapture.lifetime = .keepAlways
     add(portfolioCapture)
     let row = app.buttons.matching(
-      NSPredicate(format: "identifier BEGINSWITH %@", "portfolio-account-")
+      NSPredicate(
+        format: "identifier BEGINSWITH %@ AND label CONTAINS[c] %@", "portfolio-account-", "dydx")
     ).firstMatch
     for _ in 0..<4 {
       if row.isHittable { break }
       app.swipeUp()
     }
-    guard row.exists else { throw XCTSkip("Connect a derivatives account for this test") }
+    guard row.exists else { throw XCTSkip("Connect a dYdX account for this test") }
     row.tap()
     guard app.buttons["Trading PnL"].waitForExistence(timeout: 10) else {
       let failureCapture = XCTAttachment(screenshot: app.screenshot())

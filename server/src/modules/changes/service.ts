@@ -40,6 +40,10 @@ interface ChangeSet {
 }
 const columns: Record<Table, string[]> = {
   accounts: [
+    "provider",
+    "connectionType",
+    "providerAccountKey",
+    "lastImportedAt",
     "id",
     "name",
     "assetClass",
@@ -67,6 +71,11 @@ const columns: Record<Table, string[]> = {
     "updatedAt",
   ],
   transactions: [
+    "provider",
+    "importBatchId",
+    "contentHash",
+    "netCashAmount",
+    "taxAmount",
     "id",
     "accountId",
     "assetId",

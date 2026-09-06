@@ -15,7 +15,10 @@ export class AuthService {
     return { id: record!.id, token };
   }
   async authenticate(header?: string): Promise<boolean> {
-    if (!header || !/^Bearer [A-Za-z0-9_-]{43}$/.test(header)) return false;
+    return (await this.authenticateIdentity(header)) !== null;
+  }
+  async authenticateIdentity(header?: string): Promise<string | null> {
+    if (!header || !/^Bearer [A-Za-z0-9_-]{43}$/.test(header)) return null;
     const [token] = await this.database.db
       .select({ id: apiTokens.id })
       .from(apiTokens)
@@ -26,7 +29,7 @@ export class AuthService {
         ),
       )
       .limit(1);
-    if (!token) return false;
+    if (!token) return null;
     await this.database.db
       .update(apiTokens)
       .set({ lastUsedAt: new Date() })
@@ -36,7 +39,7 @@ export class AuthService {
           sql`(${apiTokens.lastUsedAt} IS NULL OR ${apiTokens.lastUsedAt} < now() - interval '5 minutes')`,
         ),
       );
-    return true;
+    return token.id;
   }
   async revoke(id: string) {
     return this.database.db

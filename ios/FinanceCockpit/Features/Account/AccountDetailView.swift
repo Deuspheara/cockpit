@@ -8,6 +8,7 @@ struct AccountDetailView: View {
   @State private var firstHoldingPresented = false
   @State private var range: PortfolioRange = .month
   @State private var error: String?
+  @State private var csvPresented = false
   @State private var syncing = false
   @State private var chartMetric = "Equity"
   @Environment(\.scenePhase) private var scenePhase
@@ -41,6 +42,17 @@ struct AccountDetailView: View {
           if let summary = detail.derivatives { DerivativesSummaryView(summary: summary) }
           if let historyError = detail.historyError {
             Text(historyError).font(.caption).foregroundStyle(.secondary)
+          }
+          if detail.account.provider == "trade_republic", detail.account.sourceType == "manual" {
+            VStack(alignment: .leading, spacing: 10) {
+              Text("Trade Republic · Manual").font(.subheadline).foregroundStyle(.secondary)
+              if let imported = detail.account.lastImportedAt {
+                Text("Last import " + imported.formatted(date: .abbreviated, time: .omitted)).font(
+                  .caption)
+              }
+              Button("Import CSV") { csvPresented = true }
+              NavigationLink("Import history") { CSVImportHistoryView(accountID: accountID) }
+            }
           }
           Text("Positions").font(.headline)
           if detail.account.sourceType == "manual", detail.positions.isEmpty {
@@ -145,6 +157,9 @@ struct AccountDetailView: View {
         }
       }.padding(20)
     }.navigationTitle(detail?.account.name ?? "Account")
+      .fullScreenCover(isPresented: $csvPresented) {
+        NavigationStack { CSVImportView(accountID: accountID) }
+      }
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
         if detail?.account.sourceType != "manual" {

@@ -93,9 +93,13 @@ export async function createApp(
       },
     });
   });
+  app.decorateRequest("deviceTokenId", "");
   app.addHook("onRequest", async (request, reply) => {
     if (request.url.split("?")[0] === "/health") return;
-    if (!(await auth.authenticate(request.headers.authorization)))
+    const identity = await auth.authenticateIdentity(
+      request.headers.authorization,
+    );
+    if (!identity)
       return reply.code(401).send({
         error: {
           code: "UNAUTHORIZED",
@@ -103,6 +107,7 @@ export async function createApp(
           details: {},
         },
       });
+    request.deviceTokenId = identity;
   });
   app.get("/health", async (_, reply) => {
     try {

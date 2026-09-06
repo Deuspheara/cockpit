@@ -106,6 +106,26 @@ actor APIClient {
     let request = try configuration.request(path: path, query: query, method: method, body: data)
     return try await perform(request)
   }
+  func uploadCSV(data: Data, filename: String, provider: String, accountID: UUID?) async throws
+    -> CSVImportPreview
+  {
+    let boundary = "Finance-" + UUID().uuidString
+    let safeName = filename.replacingOccurrences(of: "\"", with: "_").replacingOccurrences(
+      of: "\r", with: "_"
+    ).replacingOccurrences(of: "\n", with: "_")
+    var body = Data(
+      "--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"\(safeName)\"\r\nContent-Type: text/csv\r\n\r\n"
+        .utf8)
+    body.append(data)
+    body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+    var query = [URLQueryItem(name: "provider", value: provider)]
+    if let accountID { query.append(.init(name: "accountId", value: accountID.uuidString)) }
+    var request = try configuration.request(
+      path: "imports/csv/preview", query: query, method: "POST", body: body)
+    request.setValue(
+      "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+    return try await perform(request)
+  }
   func uploadScreenshot(id: UUID, data: Data, mime: String) async throws -> ImportSessionDTO {
     let boundary = "Finance-" + UUID().uuidString
     var body = Data(
@@ -119,17 +139,28 @@ actor APIClient {
       "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
     return try await perform(request)
   }
-  func uploadImportJob(id: UUID, revision: Int, requestID: UUID, images: [(Data, String)]) async throws -> ImportJobDTO {
+  func uploadImportJob(id: UUID, revision: Int, requestID: UUID, images: [(Data, String)])
+    async throws -> ImportJobDTO
+  {
     let boundary = "Finance-" + UUID().uuidString
     var body = Data()
     for (data, mime) in images {
-      body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"screenshot\"; filename=\"screenshot\"\r\nContent-Type: \(mime)\r\n\r\n".utf8))
+      body.append(
+        Data(
+          "--\(boundary)\r\nContent-Disposition: form-data; name=\"screenshot\"; filename=\"screenshot\"\r\nContent-Type: \(mime)\r\n\r\n"
+            .utf8))
       body.append(data)
       body.append(Data("\r\n".utf8))
     }
     body.append(Data("--\(boundary)--\r\n".utf8))
-    var request = try configuration.request(path: "imports/\(id)/jobs", query: [URLQueryItem(name: "requestId", value: requestID.uuidString), URLQueryItem(name: "revision", value: String(revision))], method: "POST", body: body)
-    request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+    var request = try configuration.request(
+      path: "imports/\(id)/jobs",
+      query: [
+        URLQueryItem(name: "requestId", value: requestID.uuidString),
+        URLQueryItem(name: "revision", value: String(revision)),
+      ], method: "POST", body: body)
+    request.setValue(
+      "multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
     return try await perform(request)
   }
   static func failure(_ data: Data, status: Int) -> APIError {
@@ -184,10 +215,14 @@ actor APIClient {
   private func perform<T: Decodable & Sendable>(_ request: URLRequest) async throws -> T {
     let responseData: Data
     let response: URLResponse
-    do { (responseData, response) = try await session.data(for: request) }
-    catch let error as URLError {
+    do { (responseData, response) = try await session.data(for: request) } catch let error
+      as URLError
+    {
       if error.code == .cancelled { throw CancellationError() }
-      throw APIError(message: error.code == .notConnectedToInternet ? "You are offline. Reconnect to restore saved progress." : "Cannot reach your server. Check your connection and retry.", code: "CONNECTIVITY")
+      throw APIError(
+        message: error.code == .notConnectedToInternet
+          ? "You are offline. Reconnect to restore saved progress."
+          : "Cannot reach your server. Check your connection and retry.", code: "CONNECTIVITY")
     }
     guard let http = response as? HTTPURLResponse else {
       throw APIError(message: "No response from server.")

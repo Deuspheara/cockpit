@@ -61,6 +61,10 @@ Portfolio's assistant button immediately left of + opens full-screen chat; Add �
 
 Chat streams text and actual tool activity, preserves interrupted replies and drafts, and supports explicit Stop and retry. Backgrounded/disconnected clients recover server progress without rerunning tools. See [the streaming protocol and operational guide](docs/chat-streaming.md).
 
+## Manual CSV import
+
+Add account → Manual import accepts Trade Republic CSV exports with a review before confirmation, separate DEFAULT/PEA accounts, duplicate-safe updates, and import history. See [CSV format, accounting, API and limitations](docs/csv-import.md).
+
 ## Asset logos
 
 Portfolio → Assets displays online logos, with a neutral symbol badge for loading, missing images, ambiguous identities, and offline assets without cached images. The bottom bar contains Home, Activity, and Settings; closing the toolbar assistant preserves the Portfolio filters and Accounts/Assets selection.

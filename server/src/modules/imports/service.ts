@@ -98,14 +98,28 @@ export class ImportService {
       },
       extraction,
       blockers,
-      candidateIssues: extraction ? Object.fromEntries([
-        ...extraction.positions.map((p) => [p.candidateId, extractionBlockers({
-          ...extraction, positions: [p], derivatives: [], transactions: [],
-        })]),
-        ...extraction.derivatives.map((d) => [d.candidateId, extractionBlockers({
-          ...extraction, positions: [], derivatives: [d], transactions: [],
-        })]),
-      ]) : {},
+      candidateIssues: extraction
+        ? Object.fromEntries([
+            ...extraction.positions.map((p) => [
+              p.candidateId,
+              extractionBlockers({
+                ...extraction,
+                positions: [p],
+                derivatives: [],
+                transactions: [],
+              }),
+            ]),
+            ...extraction.derivatives.map((d) => [
+              d.candidateId,
+              extractionBlockers({
+                ...extraction,
+                positions: [],
+                derivatives: [d],
+                transactions: [],
+              }),
+            ]),
+          ])
+        : {},
       warnings: extraction ? extractionWarnings(extraction) : [],
       questions: extraction ? validateExtraction(extraction) : [],
     };
@@ -255,13 +269,26 @@ export class ImportService {
   }
   private labelKey(name: string) {
     // Keep share class and currency words: similarly named funds are not interchangeable.
-    return name.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/g, " ")
-      .replace(/\bhealth\s+care\b/g, "healthcare").trim();
+    return name
+      .normalize("NFKD")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, " ")
+      .replace(/\bhealth\s+care\b/g, "healthcare")
+      .trim();
   }
   private async remembered(name: string | null, currency: string | null) {
     if (!name || !currency) return null;
-    const [row] = await this.database.sql`SELECT identity FROM import_instrument_memory WHERE label_key=${this.labelKey(name)} AND currency=${currency}`;
-    return row ? row.identity as { symbol: string; name: string; isin: string | null; providerKey: string | null; providerExchange: string | null } : null;
+    const [row] = await this.database
+      .sql`SELECT identity FROM import_instrument_memory WHERE label_key=${this.labelKey(name)} AND currency=${currency}`;
+    return row
+      ? (row.identity as {
+          symbol: string;
+          name: string;
+          isin: string | null;
+          providerKey: string | null;
+          providerExchange: string | null;
+        })
+      : null;
   }
   private instrumentQuery(position: ImportExtraction["positions"][number]) {
     return (
@@ -395,39 +422,118 @@ export class ImportService {
     if (ranked[1] && first.score - ranked[1].score < 0.12)
       return {
         status: "ambiguous" as const,
-        candidates: ranked.filter((item) => item.score >= 0.72)
-          .slice(0, 5).map((item) => item.candidate),
+        candidates: ranked
+          .filter((item) => item.score >= 0.72)
+          .slice(0, 5)
+          .map((item) => item.candidate),
       };
     return { status: "matched" as const, candidate: first.candidate };
   }
   async matchingChoices(id: string, candidateId: string, query?: string) {
     const session = await this.get(id);
-    const position = session.extraction?.positions.find((p) => p.candidateId?.toLowerCase() === candidateId.toLowerCase());
+    const position = session.extraction?.positions.find(
+      (p) => p.candidateId?.toLowerCase() === candidateId.toLowerCase(),
+    );
     if (!position) throw new NotFoundError("Import position not found");
-    const searchPosition = query ? { ...position, name: query,
-      isin: /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(query) ? query.toUpperCase() : null,
-      symbol: /^[A-Z0-9.-]{1,12}$/i.test(query) && !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(query) ? query : null,
-    } : position;
+    const searchPosition = query
+      ? {
+          ...position,
+          name: query,
+          isin: /^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(query)
+            ? query.toUpperCase()
+            : null,
+          symbol:
+            /^[A-Z0-9.-]{1,12}$/i.test(query) &&
+            !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/i.test(query)
+              ? query
+              : null,
+        }
+      : position;
     const search = this.instrumentQuery(searchPosition);
-    const learned = await this.remembered(query ?? position.name, position.currency ?? session.extraction?.currency ?? null);
+    const learned = await this.remembered(
+      query ?? position.name,
+      position.currency ?? session.extraction?.currency ?? null,
+    );
     let warning: string | undefined;
-    let candidates = [...(await this.market?.search(search, undefined, (message) => { warning = message; }) ?? [])];
+    let candidates = [
+      ...((await this.market?.search(search, undefined, (message) => {
+        warning = message;
+      })) ?? []),
+    ];
     // A shortened label may not be a contiguous substring of the provider's full fund name.
     if (!candidates.length && !warning && search.split(" ").length > 2) {
-      candidates = [...(await this.market?.search(search.split(" ").slice(0, 2).join(" "), undefined, (message) => { warning = message; }) ?? [])];
+      candidates = [
+        ...((await this.market?.search(
+          search.split(" ").slice(0, 2).join(" "),
+          undefined,
+          (message) => {
+            warning = message;
+          },
+        )) ?? []),
+      ];
     }
-    if (learned) candidates.unshift({ ...learned, providerKey: learned.providerKey ?? learned.symbol,
-      exchange: learned.providerExchange ?? "Confirmed", currency: position.currency ?? session.extraction?.currency ?? "EUR",
-      type: "ETF", price: null, quotedAt: null, isPrimary: false });
-    const ranked = candidates.map((candidate) => ({ candidate, score: learned && candidate.symbol === learned.symbol && candidate.isin === learned.isin ? 2 : this.score(candidate, searchPosition) }))
-      .sort((a, b) => b.score - a.score || Number(b.candidate.currency === position.currency) - Number(a.candidate.currency === position.currency));
-    const unique = ranked.filter((item, index, all) => all.findIndex((other) =>
-      (other.candidate.isin || other.candidate.providerKey) === (item.candidate.isin || item.candidate.providerKey)) === index).slice(0, 5);
-    return { choices: unique.map(({ candidate: c, score }, index) => ({
-      symbol: c.symbol, name: c.name, isin: c.isin, exchange: c.exchange, currency: c.currency,
-      recommended: learned ? c.symbol === learned.symbol && c.isin === learned.isin : index === 0 && score >= 0.72 && (!unique[1] || score - unique[1].score >= 0.12),
-      reason: learned && c.symbol === learned.symbol && c.isin === learned.isin ? "You confirmed this investment before." : score >= 0.72 ? "Matches the investment label. Check the share class and listing." : "Possible result. Check against your screenshot.",
-    })), message: warning ?? (unique.length ? null : "No matching investments were returned. Try a shorter name, ticker or ISIN.") };
+    if (learned)
+      candidates.unshift({
+        ...learned,
+        providerKey: learned.providerKey ?? learned.symbol,
+        exchange: learned.providerExchange ?? "Confirmed",
+        currency: position.currency ?? session.extraction?.currency ?? "EUR",
+        type: "ETF",
+        price: null,
+        quotedAt: null,
+        isPrimary: false,
+      });
+    const ranked = candidates
+      .map((candidate) => ({
+        candidate,
+        score:
+          learned &&
+          candidate.symbol === learned.symbol &&
+          candidate.isin === learned.isin
+            ? 2
+            : this.score(candidate, searchPosition),
+      }))
+      .sort(
+        (a, b) =>
+          b.score - a.score ||
+          Number(b.candidate.currency === position.currency) -
+            Number(a.candidate.currency === position.currency),
+      );
+    const unique = ranked
+      .filter(
+        (item, index, all) =>
+          all.findIndex(
+            (other) =>
+              (other.candidate.isin || other.candidate.providerKey) ===
+              (item.candidate.isin || item.candidate.providerKey),
+          ) === index,
+      )
+      .slice(0, 5);
+    return {
+      choices: unique.map(({ candidate: c, score }, index) => ({
+        symbol: c.symbol,
+        name: c.name,
+        isin: c.isin,
+        exchange: c.exchange,
+        currency: c.currency,
+        recommended: learned
+          ? c.symbol === learned.symbol && c.isin === learned.isin
+          : index === 0 &&
+            score >= 0.72 &&
+            (!unique[1] || score - unique[1].score >= 0.12),
+        reason:
+          learned && c.symbol === learned.symbol && c.isin === learned.isin
+            ? "You confirmed this investment before."
+            : score >= 0.72
+              ? "Matches the investment label. Check the share class and listing."
+              : "Possible result. Check against your screenshot.",
+      })),
+      message:
+        warning ??
+        (unique.length
+          ? null
+          : "No matching investments were returned. Try a shorter name, ticker or ISIN."),
+    };
   }
   private async conversionRate(from: string, to: string, at: string) {
     if (from === to) return "1";
@@ -446,7 +552,10 @@ export class ImportService {
   ): Promise<ImportExtraction> {
     for (const position of extraction.positions) {
       if (position.symbol || position.isin) continue;
-      const learned = await this.remembered(position.name, position.currency ?? extraction.currency);
+      const learned = await this.remembered(
+        position.name,
+        position.currency ?? extraction.currency,
+      );
       if (learned) Object.assign(position, learned, { matchStatus: "matched" });
     }
     const queries = [
@@ -510,12 +619,16 @@ export class ImportService {
           : {
               ...position,
               matchStatus: match.status,
-              matchCandidates: match.status === "ambiguous"
-                ? match.candidates.map((c) => ({
-                    symbol: c.symbol, name: c.name, isin: c.isin,
-                    exchange: c.exchange, currency: c.currency,
-                  }))
-                : [],
+              matchCandidates:
+                match.status === "ambiguous"
+                  ? match.candidates.map((c) => ({
+                      symbol: c.symbol,
+                      name: c.name,
+                      isin: c.isin,
+                      exchange: c.exchange,
+                      currency: c.currency,
+                    }))
+                  : [],
             },
       );
     }
@@ -834,19 +947,35 @@ export class ImportService {
         VALUES(${id},${revision},${tx.json({ kind: "edit", candidate: patch, merged: next })})`;
       for (const edit of patch.positions ?? []) {
         if (!edit.symbol && !edit.isin) continue;
-        const before = session.extraction!.positions.find((p) => p.candidateId?.toLowerCase() === edit.candidateId.toLowerCase());
-        const after = next.positions.find((p) => p.candidateId?.toLowerCase() === edit.candidateId.toLowerCase());
+        const before = session.extraction!.positions.find(
+          (p) =>
+            p.candidateId?.toLowerCase() === edit.candidateId.toLowerCase(),
+        );
+        const after = next.positions.find(
+          (p) =>
+            p.candidateId?.toLowerCase() === edit.candidateId.toLowerCase(),
+        );
         const currency = after?.currency ?? next.currency;
-        if (!before?.name || !after?.symbol || after.matchStatus === "ambiguous" || !currency) continue;
-        const identity = { symbol: after.symbol, name: after.name ?? after.symbol, isin: after.isin,
-          providerKey: after.providerKey, providerExchange: after.providerExchange };
+        if (
+          !before?.name ||
+          !after?.symbol ||
+          after.matchStatus === "ambiguous" ||
+          !currency
+        )
+          continue;
+        const identity = {
+          symbol: after.symbol,
+          name: after.name ?? after.symbol,
+          isin: after.isin,
+          providerKey: after.providerKey,
+          providerExchange: after.providerExchange,
+        };
         for (const name of new Set([before.name, after.name ?? before.name])) {
           await tx`INSERT INTO import_instrument_memory(label_key,currency,identity)
             VALUES(${this.labelKey(name)},${currency},${tx.json(identity)})
             ON CONFLICT(label_key,currency) DO UPDATE SET identity=excluded.identity,updated_at=now()`;
         }
       }
-
     });
     return this.get(id);
   }

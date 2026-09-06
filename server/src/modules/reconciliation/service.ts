@@ -1,3 +1,5 @@
+import { tradeCashMovement } from "../ledger/settlement.js";
+import { Decimal, money } from "../../shared/decimal.js";
 import type { Sql, TransactionSql } from "postgres";
 import {
   ledgerQuantity,
@@ -21,13 +23,29 @@ export class ReconciliationService {
           t.assetId === o.assetId &&
           new Date(t.occurredAt) <= new Date(String(o.observedAt)),
       );
-      if (!ledger.length) continue;
-      const expected = ledgerQuantity(ledger),
-        delta = reconciliationDelta(
-          expected,
-          String(o.quantity),
-          String(o.assetType),
-        );
+      const cashTrades =
+        o.assetType === "cash"
+          ? transactions.filter(
+              (t) =>
+                ["BUY", "SELL"].includes(t.type) &&
+                t.currency === o.currency &&
+                new Date(t.occurredAt) <= new Date(String(o.observedAt)),
+            )
+          : [];
+      if (!ledger.length && !cashTrades.length) continue;
+      const movements = cashTrades.map(tradeCashMovement);
+      if (movements.some((m) => m === null)) continue;
+      const expected = money(
+        movements.reduce<Decimal>(
+          (total, movement) => total.plus(movement!),
+          new Decimal(ledgerQuantity(ledger)),
+        ),
+      );
+      const delta = reconciliationDelta(
+        expected,
+        String(o.quantity),
+        String(o.assetType),
+      );
       if (delta === null) {
         await this.database
           .sql`UPDATE reconciliation_items SET status='resolved',updated_at=now() WHERE account_id=${accountId} AND asset_id=${String(o.assetId)} AND status='open'`;

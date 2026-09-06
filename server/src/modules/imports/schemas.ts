@@ -29,13 +29,18 @@ export const extractionSchema = z
             evidence: text,
             providerKey: text,
             providerExchange: text,
-            matchCandidates: z.array(z.object({
-              symbol: z.string(),
-              name: z.string(),
-              isin: z.string().nullable(),
-              exchange: z.string(),
-              currency: z.string().nullable(),
-            })).max(5).default([]),
+            matchCandidates: z
+              .array(
+                z.object({
+                  symbol: z.string(),
+                  name: z.string(),
+                  isin: z.string().nullable(),
+                  exchange: z.string(),
+                  currency: z.string().nullable(),
+                }),
+              )
+              .max(5)
+              .default([]),
             matchStatus: z
               .enum(["unmatched", "matched", "ambiguous"])
               .default("unmatched"),

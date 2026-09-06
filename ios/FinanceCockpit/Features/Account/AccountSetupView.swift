@@ -3,6 +3,8 @@ import SwiftUI
 struct AccountSetupView: View {
   @Environment(AppEnvironment.self) private var environment
   @Environment(\.dismiss) private var dismiss
+  @State private var csvPresented = false
+  @State private var csvStartRevision = 0
   @State private var model = AccountSetupModel()
   var onOpen: (Account) -> Void
 
@@ -16,6 +18,10 @@ struct AccountSetupView: View {
           {
             model.draft.tracking = .connected
             model.path.append(.type)
+          }
+          choice("Manual import", detail: "Import a Trade Republic CSV and review transactions.") {
+            csvStartRevision = environment.dataRevision
+            csvPresented = true
           }
           choice("Track manually", detail: "Add investments, crypto, or cash yourself.") {
             model.draft.tracking = .manual
@@ -33,6 +39,10 @@ struct AccountSetupView: View {
       }
       .toolbar { closeButton }
     }
+    .fullScreenCover(
+      isPresented: $csvPresented,
+      onDismiss: { if environment.dataRevision > csvStartRevision { dismiss() } }
+    ) { NavigationStack { CSVImportView() } }
     .interactiveDismissDisabled(model.working && model.account == nil)
   }
 
@@ -81,11 +91,15 @@ struct AccountSetupView: View {
               choice(
                 provider.title,
                 detail: provider == .evmWallet
-                  ? (environment.sessionInfo?.walletConfigured == true ? "Track a public wallet" : "Alchemy not configured. Configure ALCHEMY_API_KEY on the server.") : "Sync your account read-only"
+                  ? (environment.sessionInfo?.walletConfigured == true
+                    ? "Track a public wallet"
+                    : "Alchemy not configured. Configure ALCHEMY_API_KEY on the server.")
+                  : "Sync your account read-only"
               ) {
                 model.draft.provider = provider
                 model.path.append(.details)
-              }.disabled(provider == .evmWallet && environment.sessionInfo?.walletConfigured != true)
+              }.disabled(
+                provider == .evmWallet && environment.sessionInfo?.walletConfigured != true)
             }
           } else {
             ForEach(ManualAccountCategory.allCases) { category in

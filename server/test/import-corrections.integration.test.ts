@@ -24,7 +24,9 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
     await migrate(url);
     db = connectDatabase(url);
   });
-  beforeEach(async () => { await db.sql`TRUNCATE import_instrument_memory`; });
+  beforeEach(async () => {
+    await db.sql`TRUNCATE import_instrument_memory`;
+  });
   afterAll(async () => {
     await db.sql`TRUNCATE import_sessions,accounts,assets,import_instrument_memory CASCADE`;
     await db.close();
@@ -41,7 +43,11 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
     quotedAt: "2026-09-04T00:00:00Z",
     isPrimary: false,
   };
-  function setup(unitPrice: string | null = null, ambiguous = false, unavailable = false) {
+  function setup(
+    unitPrice: string | null = null,
+    ambiguous = false,
+    unavailable = false,
+  ) {
     const model = new OpenRouterClient(config, async () =>
       Response.json({
         choices: [
@@ -135,12 +141,28 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
       result.blockers.every((message) => !message.includes("needs a quantity")),
     ).toBe(true);
     const row = result.extraction!.positions[0]!;
-    const choices = await service.matchingChoices(created.id, row.candidateId!, "Core MSCI World USD (Acc)");
+    const choices = await service.matchingChoices(
+      created.id,
+      row.candidateId!,
+      "Core MSCI World USD (Acc)",
+    );
     expect(choices.choices).toHaveLength(2);
     expect(choices.choices.every((choice) => !choice.recommended)).toBe(true);
-    const exactChoice = await service.matchingChoices(created.id, row.candidateId!, "IE00B4L5Y983");
-    expect(exactChoice.choices[0]).toMatchObject({ symbol: "EUNL", recommended: true });
-    await expect(service.matchingChoices(created.id, "00000000-0000-4000-8000-000000000000")).rejects.toThrow("not found");
+    const exactChoice = await service.matchingChoices(
+      created.id,
+      row.candidateId!,
+      "IE00B4L5Y983",
+    );
+    expect(exactChoice.choices[0]).toMatchObject({
+      symbol: "EUNL",
+      recommended: true,
+    });
+    await expect(
+      service.matchingChoices(
+        created.id,
+        "00000000-0000-4000-8000-000000000000",
+      ),
+    ).rejects.toThrow("not found");
 
     expect(row.matchCandidates).toHaveLength(2);
     expect(result.candidateIssues[row.candidateId!]).not.toEqual([]);
@@ -151,7 +173,14 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
     expect(saved.revision).toBe(result.revision + 1);
     const selected = row.matchCandidates.find((c) => c.symbol === "EUNL")!;
     const resolved = await service.update(created.id, saved.revision, {
-      positions: [{ candidateId: row.candidateId!, symbol: selected.symbol, isin: selected.isin, name: selected.name }],
+      positions: [
+        {
+          candidateId: row.candidateId!,
+          symbol: selected.symbol,
+          isin: selected.isin,
+          name: selected.name,
+        },
+      ],
     });
     expect(resolved.candidateIssues[row.candidateId!]).toEqual([]);
     expect(resolved.blockers).toEqual([]);
@@ -161,8 +190,15 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
   it("provides a search recovery message when an unmatched holding has no candidates", async () => {
     const { service } = setup(null, false, true);
     const created = await service.create();
-    const result = await service.extract(created.id, { bytes: Buffer.from("fixture"), mime: "image/png" });
-    const choices = await service.matchingChoices(created.id, result.extraction!.positions[0]!.candidateId!, "MSCI World Health Care USD");
+    const result = await service.extract(created.id, {
+      bytes: Buffer.from("fixture"),
+      mime: "image/png",
+    });
+    const choices = await service.matchingChoices(
+      created.id,
+      result.extraction!.positions[0]!.candidateId!,
+      "MSCI World Health Care USD",
+    );
     expect(choices.choices).toEqual([]);
     expect(choices.message).toContain("Try a shorter name, ticker or ISIN");
     expect(result.blockers.length).toBeGreaterThan(0);
@@ -170,23 +206,75 @@ describe.skipIf(!url)("screenshot holding corrections from iOS", () => {
   it("remembers an explicit confirmation across imports and provider outages without reusing prices", async () => {
     const { service } = setup(null, true);
     const created = await service.create();
-    const first = await service.extract(created.id, { bytes: Buffer.from("fixture"), mime: "image/png" });
+    const first = await service.extract(created.id, {
+      bytes: Buffer.from("fixture"),
+      mime: "image/png",
+    });
     const row = first.extraction!.positions[0]!;
-    await service.update(created.id, first.revision, { positions: [{ candidateId: row.candidateId!, symbol: "EUNL", isin: candidate.isin, name: candidate.name }] });
+    await service.update(created.id, first.revision, {
+      positions: [
+        {
+          candidateId: row.candidateId!,
+          symbol: "EUNL",
+          isin: candidate.isin,
+          name: candidate.name,
+        },
+      ],
+    });
     // Simulate the schema upgrade with existing confirmed edits, not just fresh storage.
     await db.sql`DROP TABLE import_instrument_memory`;
-    await db.sql.unsafe(await readFile(new URL("../migrations/0010_import_instrument_memory.sql", import.meta.url), "utf8"));
+    await db.sql.unsafe(
+      await readFile(
+        new URL(
+          "../migrations/0010_import_instrument_memory.sql",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    );
     const unavailable = setup(null, false, true).service;
     const next = await unavailable.create();
-    const restored = await unavailable.extract(next.id, { bytes: Buffer.from("fixture"), mime: "image/png" });
+    const restored = await unavailable.extract(next.id, {
+      bytes: Buffer.from("fixture"),
+      mime: "image/png",
+    });
     expect(restored.blockers).toEqual([]);
-    expect(restored.extraction!.positions[0]).toMatchObject({ symbol: "EUNL", isin: candidate.isin, quantity: null, quotePrice: null });
-    const choices = await unavailable.matchingChoices(next.id, restored.extraction!.positions[0]!.candidateId!, "Core MSCI World USD (Acc)");
-    expect(choices.choices[0]).toMatchObject({ symbol: "EUNL", recommended: true, reason: "You confirmed this investment before." });
-    const differentClass = await unavailable.matchingChoices(next.id, restored.extraction!.positions[0]!.candidateId!, "Core MSCI World USD (Dist)");
+    expect(restored.extraction!.positions[0]).toMatchObject({
+      symbol: "EUNL",
+      isin: candidate.isin,
+      quantity: null,
+      quotePrice: null,
+    });
+    const choices = await unavailable.matchingChoices(
+      next.id,
+      restored.extraction!.positions[0]!.candidateId!,
+      "Core MSCI World USD (Acc)",
+    );
+    expect(choices.choices[0]).toMatchObject({
+      symbol: "EUNL",
+      recommended: true,
+      reason: "You confirmed this investment before.",
+    });
+    const differentClass = await unavailable.matchingChoices(
+      next.id,
+      restored.extraction!.positions[0]!.candidateId!,
+      "Core MSCI World USD (Dist)",
+    );
     expect(differentClass.choices).toEqual([]);
-    await expect(service.update(created.id, first.revision, { positions: [{ candidateId: row.candidateId!, symbol: "WRONG" }] })).rejects.toThrow();
-    expect((await unavailable.matchingChoices(next.id, restored.extraction!.positions[0]!.candidateId!, "Core MSCI World USD (Acc)")).choices[0]!.symbol).toBe("EUNL");
+    await expect(
+      service.update(created.id, first.revision, {
+        positions: [{ candidateId: row.candidateId!, symbol: "WRONG" }],
+      }),
+    ).rejects.toThrow();
+    expect(
+      (
+        await unavailable.matchingChoices(
+          next.id,
+          restored.extraction!.positions[0]!.candidateId!,
+          "Core MSCI World USD (Acc)",
+        )
+      ).choices[0]!.symbol,
+    ).toBe("EUNL");
   });
   it("accepts uppercase iOS row IDs for both stocks and puts and keeps no-op edits estimated", async () => {
     const { service, model } = setup("125");

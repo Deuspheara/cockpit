@@ -94,6 +94,10 @@ struct AccountRow: Codable, Identifiable, Sendable {
   }
 }
 struct Account: Codable, Identifiable, Sendable {
+  var provider: String? = nil
+  var connectionType: String? = nil
+  var providerAccountKey: String? = nil
+  var lastImportedAt: Date? = nil
   let id: UUID
   let name: String
   let assetClass: String

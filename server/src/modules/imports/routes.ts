@@ -1,3 +1,4 @@
+import { registerCsvRoutes } from "./csv/routes.js";
 import { ImportJobs, type Screenshot } from "./jobs.js";
 import type { FastifyInstance } from "fastify";
 import multipart from "@fastify/multipart";
@@ -27,6 +28,7 @@ export async function registerImportRoutes(
       parts: 7,
     },
   });
+  registerCsvRoutes(app, database, cache);
   const imports = new ImportService(
     database,
     model,
@@ -168,8 +170,15 @@ export async function registerImportRoutes(
     ),
   );
   app.get("/api/v1/imports/:id/positions/:candidateId/matches", (request) => {
-    const params = z.object({ id: z.uuid().toLowerCase(), candidateId: z.uuid().toLowerCase() }).parse(request.params);
-    const query = z.object({ query: z.string().trim().min(1).max(200).optional() }).parse(request.query);
+    const params = z
+      .object({
+        id: z.uuid().toLowerCase(),
+        candidateId: z.uuid().toLowerCase(),
+      })
+      .parse(request.params);
+    const query = z
+      .object({ query: z.string().trim().min(1).max(200).optional() })
+      .parse(request.query);
     return imports.matchingChoices(params.id, params.candidateId, query.query);
   });
   const editableText = z.string().trim().max(1000).nullable();

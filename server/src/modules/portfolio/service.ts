@@ -1,3 +1,4 @@
+import { tradeCashMovement } from "../ledger/settlement.js";
 import { valuationHistory } from "./valuation-history.js";
 import type { ValuationIssue } from "./coverage.js";
 import { visibleAccounts } from "../accounts/visibility.js";
@@ -75,7 +76,19 @@ export class PortfolioService {
         const observed = observations.find(
           (o) => o.accountId === a.id && o.assetId === asset.id,
         );
-        const useLedger = a.sourceType === "manual" && ledger.length > 0;
+        const cashTrades =
+          asset.assetType === "cash" && a.sourceType === "manual"
+            ? transactions.filter(
+                (t) =>
+                  t.accountId === a.id &&
+                  t.netCashAmount != null &&
+                  t.currency === asset.quoteCurrency &&
+                  ["BUY", "SELL"].includes(t.type),
+              )
+            : [];
+        const useLedger =
+          a.sourceType === "manual" &&
+          (ledger.length > 0 || cashTrades.length > 0);
         if (!useLedger && !observed) continue;
         let quantity: DecimalString | undefined = useLedger
           ? ledgerQuantity(ledger)
@@ -94,19 +107,12 @@ export class PortfolioService {
           let cash = new Decimal(quantity!);
           let incomplete = false;
           for (const trade of trades) {
-            const gross =
-              trade.grossAmount ??
-              (trade.unitPrice != null
-                ? new Decimal(trade.quantity).mul(trade.unitPrice).toString()
-                : null);
-            if (gross === null) {
+            const movement = tradeCashMovement(trade);
+            if (movement === null) {
               incomplete = true;
               break;
             }
-            cash =
-              trade.type === "BUY"
-                ? cash.minus(gross).minus(trade.feeAmount ?? 0)
-                : cash.plus(gross).minus(trade.feeAmount ?? 0);
+            cash = cash.plus(movement);
           }
           if (incomplete) {
             positions.push({

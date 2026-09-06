@@ -55,6 +55,8 @@ export const transactionInput = z
 export type TransactionInput = z.infer<typeof transactionInput>;
 export interface Transaction extends TransactionInput {
   id: string;
+  netCashAmount?: string | null;
+  taxAmount?: string | null;
   source: string;
   isVoided: boolean;
   externalId: string | null;

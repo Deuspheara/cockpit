@@ -36,9 +36,20 @@
   @MainActor private final class InteractionFixtureStore {
     static let shared = InteractionFixtureStore()
     let initial = Account(
-      id: UUID(), name: ProcessInfo.processInfo.arguments.contains("--wallet-layout") ? "Base Eth" : "Test investments",
-      assetClass: ProcessInfo.processInfo.arguments.contains("--wallet-layout") ? "crypto" : "equities",
-      sourceType: ProcessInfo.processInfo.arguments.contains("--wallet-layout") ? "evm_wallet" : "manual",
+      provider: ProcessInfo.processInfo.arguments.contains("--csv-account")
+        ? "trade_republic" : nil,
+      connectionType: ProcessInfo.processInfo.arguments.contains("--csv-account")
+        ? "manual_csv" : nil,
+      providerAccountKey: ProcessInfo.processInfo.arguments.contains("--csv-account")
+        ? "DEFAULT" : nil,
+      lastImportedAt: ProcessInfo.processInfo.arguments.contains("--csv-account") ? Date() : nil,
+      id: UUID(),
+      name: ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+        ? "Base Eth" : "Test investments",
+      assetClass: ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+        ? "crypto" : "equities",
+      sourceType: ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+        ? "evm_wallet" : "manual",
       baseCurrency: "EUR", externalAddress: nil)
     var accounts: [Account] = []
     var assets = [
@@ -84,25 +95,73 @@
     func response(_ request: URLRequest) throws -> Data {
       let url = request.url!
       let path = url.path.replacingOccurrences(of: "/api/v1/", with: "")
-      let input = request.value(forHTTPHeaderField: "Content-Type")?.contains("multipart") == true ? [:] : try body(request)
+      let input =
+        request.value(forHTTPHeaderField: "Content-Type")?.contains("multipart") == true
+        ? [:] : try body(request)
       let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
       let range =
         PortfolioRange(rawValue: query.first { $0.name == "range" }?.value ?? "1m") ?? .month
       let scope =
         PortfolioScope(rawValue: query.first { $0.name == "scope" }?.value ?? "global") ?? .global
+      if path.hasPrefix("accounts/"), path.hasSuffix("/imports") {
+        return try encode([
+          CSVImportHistoryItem(
+            id: CSVFixtures.id, filename: "trade-republic.csv", status: "completed",
+            completedAt: Date(), importedRows: 3, duplicateRows: 0)
+        ])
+      }
+      if path.hasPrefix("imports/csv/") {
+        if ProcessInfo.processInfo.arguments.contains("--csv-error") {
+          throw APIError(message: "CSV service unavailable")
+        }
+        if request.httpMethod == "DELETE" { return try encode(["cancelled": true]) }
+        return try encode(
+          CSVFixtures.preview(
+            completed: path.hasSuffix("/confirm"),
+            duplicates: ProcessInfo.processInfo.arguments.contains("--csv-duplicates")))
+      }
       if path == "imports" { return try importResponse() }
       if path.hasPrefix("imports/") {
         if path.hasSuffix("/matches") {
-          return try encode(["choices": JSONValue.array(ProcessInfo.processInfo.arguments.contains("--empty-matches") ? [] : [.object(["symbol": .string("EUNL"), "name": .string("iShares Core MSCI World"), "isin": .string("IE00B4L5Y983"), "exchange": .string("XETRA"), "currency": .string("EUR"), "recommended": .bool(true), "reason": .string("Matches the investment label.")])]), "message": .string("Check the share class against your screenshot.")])
+          return try encode([
+            "choices": JSONValue.array(
+              ProcessInfo.processInfo.arguments.contains("--empty-matches")
+                ? []
+                : [
+                  .object([
+                    "symbol": .string("EUNL"), "name": .string("iShares Core MSCI World"),
+                    "isin": .string("IE00B4L5Y983"), "exchange": .string("XETRA"),
+                    "currency": .string("EUR"), "recommended": .bool(true),
+                    "reason": .string("Matches the investment label."),
+                  ])
+                ]), "message": .string("Check the share class against your screenshot."),
+          ])
         }
-        if path.contains("/cancel") { importCancelled = true; return try encode(importJob()) }
-        if path.hasSuffix("/jobs") { jobReads = 0; return try encode(importJob()) }
-        if path.hasSuffix("/prepare-change-set") { importPrepared = true; return try encode(importChange()) }
+        if path.contains("/cancel") {
+          importCancelled = true
+          return try encode(importJob())
+        }
+        if path.hasSuffix("/jobs") {
+          jobReads = 0
+          return try encode(importJob())
+        }
+        if path.hasSuffix("/prepare-change-set") {
+          importPrepared = true
+          return try encode(importChange())
+        }
         if request.httpMethod == "PATCH" {
           importRevision += 1
-          if case .array(let rows) = input["positions"], case .object(let row) = rows.first, row["symbol"]?.display == "EUNL" { importUnresolved = false }
+          if case .array(let rows) = input["positions"], case .object(let row) = rows.first,
+            row["symbol"]?.display == "EUNL"
+          {
+            importUnresolved = false
+          }
           if let name = input["likelyAccountName"] { importName = name.display }
-          if case .array(let rows) = input["positions"], case .object(let row) = rows.first, let quantity = row["quantity"] { importQuantity = quantity.display }
+          if case .array(let rows) = input["positions"], case .object(let row) = rows.first,
+            let quantity = row["quantity"]
+          {
+            importQuantity = quantity.display
+          }
         }
         jobReads += 1
         if jobReads > 2 { imported = true }
@@ -134,7 +193,14 @@
       if path == "assets" { return try encode(assets) }
       if path.hasSuffix("/sync") || path.hasSuffix("/sync-runs") {
         if ProcessInfo.processInfo.arguments.contains("--wallet-layout") {
-          return try encode(["status": JSONValue.string("partial"), "provider": .string("alchemy"), "warnings": .array([.string("base-mainnet: Some token prices are unavailable; balances synchronized without valuation")])])
+          return try encode([
+            "status": JSONValue.string("partial"), "provider": .string("alchemy"),
+            "warnings": .array([
+              .string(
+                "base-mainnet: Some token prices are unavailable; balances synchronized without valuation"
+              )
+            ]),
+          ])
         }
         if ProcessInfo.processInfo.arguments.contains("--sync-failure") {
           throw APIError(message: "Fixture sync unavailable")
@@ -161,24 +227,63 @@
         let account = accounts.first { $0.id.uuidString.lowercased() == id.lowercased() } ?? initial
         return try encode(
           AccountDetail(
-            account: account, dashboard: dashboard(range: range, scope: scope), positions: ProcessInfo.processInfo.arguments.contains("--wallet-layout") ? [
-              Position(assetId: candidateID, symbol: "ETH", name: "Ethereum", assetType: "crypto", quantity: Amount(0.12), price: nil, marketValue: Amount(503.45), currency: "USD", costBasis: nil, unrealizedPnl: nil, source: "evm_wallet", observedAt: Date(), stale: false, side: nil)
-            ] : [],
-            activity: [], historyJob: ProcessInfo.processInfo.arguments.contains("--partial-history") ? EVMHistoryJob(status: historyRetried ? "queued" : "partial", phase: "balances", daysDone: 30, totalDays: 90, requestsUsed: 125, dailyRequestLimit: 1000, nextAttemptAt: Date(), error: historyRetried ? nil : "Some historical token prices remain unavailable") : nil))
+            account: account, dashboard: dashboard(range: range, scope: scope),
+            positions: ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+              ? [
+                Position(
+                  assetId: candidateID, symbol: "ETH", name: "Ethereum", assetType: "crypto",
+                  quantity: Amount(0.12), price: nil, marketValue: Amount(503.45), currency: "USD",
+                  costBasis: nil, unrealizedPnl: nil, source: "evm_wallet", observedAt: Date(),
+                  stale: false, side: nil)
+              ] : [],
+            activity: [],
+            historyJob: ProcessInfo.processInfo.arguments.contains("--partial-history")
+              ? EVMHistoryJob(
+                status: historyRetried ? "queued" : "partial", phase: "balances", daysDone: 30,
+                totalDays: 90, requestsUsed: 125, dailyRequestLimit: 1000, nextAttemptAt: Date(),
+                error: historyRetried ? nil : "Some historical token prices remain unavailable")
+              : nil))
       }
       if path == "portfolio/assets" || path == "activity" { return Data("[]".utf8) }
       throw APIError(message: "No UI fixture for \(path)")
     }
     func importJob() -> [String: JSONValue] {
-      ["id": .string(jobID.uuidString), "status": .string(importCancelled ? "cancelled" : imported ? "completed" : "running"), "phase": .string(imported ? "complete" : "extracting"), "failure": .null]
+      [
+        "id": .string(jobID.uuidString),
+        "status": .string(importCancelled ? "cancelled" : imported ? "completed" : "running"),
+        "phase": .string(imported ? "complete" : "extracting"), "failure": .null,
+      ]
     }
     func importResponse() throws -> Data {
-      var result: [String: JSONValue] = ["id": .string(importID.uuidString), "status": .string("ready_for_review"), "revision": .number(Decimal(importRevision)), "blockers": .array([]), "warnings": .array([.string("Quantity estimated from EODHD")]), "processing": .object(importJob()), "changeSetId": importPrepared ? .string(changeID.uuidString) : .null]
-      result["candidateIssues"] = .object([candidateID.uuidString.lowercased(): .array(importUnresolved ? [.string("Choose the exact investment.")] : [])])
+      var result: [String: JSONValue] = [
+        "id": .string(importID.uuidString), "status": .string("ready_for_review"),
+        "revision": .number(Decimal(importRevision)), "blockers": .array([]),
+        "warnings": .array([.string("Quantity estimated from EODHD")]),
+        "processing": .object(importJob()),
+        "changeSetId": importPrepared ? .string(changeID.uuidString) : .null,
+      ]
+      result["candidateIssues"] = .object([
+        candidateID.uuidString.lowercased(): .array(
+          importUnresolved ? [.string("Choose the exact investment.")] : [])
+      ])
       if imported {
-        result["extraction"] = .object(["likelyAccountName": .string(importName), "capturedAt": .string("2026-09-01T00:00:00Z"), "capturedAtInferred": .bool(false), "currency": .string("EUR"), "positions": .array([.object(["candidateId": .string(candidateID.uuidString), "symbol": .string("AAPL"), "name": .string("Apple"), "quantity": .string(importQuantity), "marketValue": .string("400"), "currency": .string("EUR"), "confidence": .number(1), "matchStatus": .string("matched"), "quantitySource": .string("estimated"), "sourceLines": .number(1), "sourceCandidateIds": .array([])])]), "derivatives": .array([])])
+        result["extraction"] = .object([
+          "likelyAccountName": .string(importName), "capturedAt": .string("2026-09-01T00:00:00Z"),
+          "capturedAtInferred": .bool(false), "currency": .string("EUR"),
+          "positions": .array([
+            .object([
+              "candidateId": .string(candidateID.uuidString), "symbol": .string("AAPL"),
+              "name": .string("Apple"), "quantity": .string(importQuantity),
+              "marketValue": .string("400"), "currency": .string("EUR"), "confidence": .number(1),
+              "matchStatus": .string("matched"), "quantitySource": .string("estimated"),
+              "sourceLines": .number(1), "sourceCandidateIds": .array([]),
+            ])
+          ]), "derivatives": .array([]),
+        ])
       }
-      if importUnresolved, case .object(var extraction) = result["extraction"], case .array(var rows) = extraction["positions"], case .object(var row) = rows[0] {
+      if importUnresolved, case .object(var extraction) = result["extraction"],
+        case .array(var rows) = extraction["positions"], case .object(var row) = rows[0]
+      {
         row["symbol"] = .null
         row["name"] = .string("Core MSCI World USD (Acc)")
         row["matchStatus"] = .string("ambiguous")
@@ -190,7 +295,11 @@
       return try encode(result)
     }
     func importChange() -> ChangeSet {
-      ChangeSet(id: changeID, title: "Import screenshots", summary: "One holding", status: importUndone ? "undone" : applied ? "applied" : "draft", operations: [.init(table: "accounts", id: initial.id, before: nil, after: [:])], labels: nil, effects: nil)
+      ChangeSet(
+        id: changeID, title: "Import screenshots", summary: "One holding",
+        status: importUndone ? "undone" : applied ? "applied" : "draft",
+        operations: [.init(table: "accounts", id: initial.id, before: nil, after: [:])],
+        labels: nil, effects: nil)
     }
     func change() -> ChangeSet {
       ChangeSet(
@@ -206,16 +315,29 @@
       let base = PortfolioDashboard.preview
       let wallet = ProcessInfo.processInfo.arguments.contains("--wallet-layout")
       let partial = ProcessInfo.processInfo.arguments.contains("--partial-history")
-      let issue = ValuationIssue(code: "missing_price", accountId: initial.id, name: "Unpriced Base token", network: "base-mainnet", contractAddress: "0x" + String(repeating: "b", count: 40), message: "No usable price is available for this holding", retryable: true)
-      let points = wallet ? [] : range == .day ? Array(base.chart.suffix(1)) : range == .week ? [] : base.chart
+      let issue = ValuationIssue(
+        code: "missing_price", accountId: initial.id, name: "Unpriced Base token",
+        network: "base-mainnet", contractAddress: "0x" + String(repeating: "b", count: 40),
+        message: "No usable price is available for this holding", retryable: true)
+      let points =
+        wallet ? [] : range == .day ? Array(base.chart.suffix(1)) : range == .week ? [] : base.chart
       return PortfolioDashboard(
         scope: scope, range: range, currency: "EUR", value: wallet ? Amount(433.19) : base.value,
-        complete: !wallet, absoluteChange: wallet ? nil : base.absoluteChange, percentChange: wallet ? nil : base.percentChange,
-        asOf: base.asOf, chart: partial ? [
-          ValuationPoint(at: Date().addingTimeInterval(-86400 * 2), value: Amount(400), complete: false, segmentId: "1", coverage: ValuationCoverage(valued: ["ETH"], missing: [issue])),
-          ValuationPoint(at: Date().addingTimeInterval(-86400), value: Amount(430), complete: false, segmentId: "1", coverage: ValuationCoverage(valued: ["ETH"], missing: [issue])),
-          ValuationPoint(at: Date(), value: Amount(435), complete: true, segmentId: "2", coverage: ValuationCoverage(valued: ["ETH", "TOKEN"], missing: []))
-        ] : points, allocation: base.allocation,
+        complete: !wallet, absoluteChange: wallet ? nil : base.absoluteChange,
+        percentChange: wallet ? nil : base.percentChange,
+        asOf: base.asOf,
+        chart: partial
+          ? [
+            ValuationPoint(
+              at: Date().addingTimeInterval(-86400 * 2), value: Amount(400), complete: false,
+              segmentId: "1", coverage: ValuationCoverage(valued: ["ETH"], missing: [issue])),
+            ValuationPoint(
+              at: Date().addingTimeInterval(-86400), value: Amount(430), complete: false,
+              segmentId: "1", coverage: ValuationCoverage(valued: ["ETH"], missing: [issue])),
+            ValuationPoint(
+              at: Date(), value: Amount(435), complete: true, segmentId: "2",
+              coverage: ValuationCoverage(valued: ["ETH", "TOKEN"], missing: [])),
+          ] : points, allocation: base.allocation,
         accounts: ([initial] + accounts).map {
           AccountRow(
             id: $0.id, name: $0.name, assetClass: $0.assetClass, sourceType: $0.sourceType,

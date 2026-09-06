@@ -166,22 +166,55 @@ describe("EODHD enrichment safeguards", () => {
   it("keeps valid results when another result is malformed and reuses identities without stale prices", async () => {
     const redis = cache();
     let offline = false;
-    const market = new EODHDMarketData(redis as never, { EODHD_API_TOKEN: "fixture", EODHD_DAILY_LIMIT: 20 }, async () => {
-      if (offline) return new Response("unavailable", { status: 503 });
-      return Response.json([{ Code: "IWDA", Exchange: "AS", Name: "Core MSCI World", Type: "ETF", Currency: "EUR", Country: null, previousClose: 100 }, { Code: null }]);
-    });
+    const market = new EODHDMarketData(
+      redis as never,
+      { EODHD_API_TOKEN: "fixture", EODHD_DAILY_LIMIT: 20 },
+      async () => {
+        if (offline) return new Response("unavailable", { status: 503 });
+        return Response.json([
+          {
+            Code: "IWDA",
+            Exchange: "AS",
+            Name: "Core MSCI World",
+            Type: "ETF",
+            Currency: "EUR",
+            Country: null,
+            previousClose: 100,
+          },
+          { Code: null },
+        ]);
+      },
+    );
     expect(await market.search("core msci world")).toHaveLength(1);
-    for (const key of redis.values.keys()) if (key.includes(":search:")) redis.values.delete(key);
+    for (const key of redis.values.keys())
+      if (key.includes(":search:")) redis.values.delete(key);
     offline = true;
     let warning = "";
-    const fallback = await market.search("core msci world", undefined, (message) => { warning = message; });
-    expect(fallback[0]).toMatchObject({ symbol: "IWDA", price: null, quotedAt: null });
+    const fallback = await market.search(
+      "core msci world",
+      undefined,
+      (message) => {
+        warning = message;
+      },
+    );
+    expect(fallback[0]).toMatchObject({
+      symbol: "IWDA",
+      price: null,
+      quotedAt: null,
+    });
     expect(warning).toContain("unavailable");
   });
   it("reports missing configuration instead of pretending there are no matching investments", async () => {
     let warning = "";
-    const market = new EODHDMarketData(cache() as never, { EODHD_API_TOKEN: "", EODHD_DAILY_LIMIT: 20 });
-    expect(await market.search("fund", undefined, (message) => { warning = message; })).toEqual([]);
+    const market = new EODHDMarketData(cache() as never, {
+      EODHD_API_TOKEN: "",
+      EODHD_DAILY_LIMIT: 20,
+    });
+    expect(
+      await market.search("fund", undefined, (message) => {
+        warning = message;
+      }),
+    ).toEqual([]);
     expect(warning).toContain("EODHD_API_TOKEN");
   });
   it("falls back without network access after the Redis daily budget", async () => {

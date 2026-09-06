@@ -26,3 +26,7 @@ docs/screenshots/
 *.p8
 *.mobileprovision
 *.key
+
+# Private financial exports; sanitized fixtures live in server/test/fixtures
+private-samples/
+Exportation de transactions*.csv

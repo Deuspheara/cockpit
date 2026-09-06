@@ -62,6 +62,10 @@ export const transactionTypeEnum = pgEnum("transaction_type", [
   "ADJUSTMENT",
 ]);
 export const accounts = pgTable("accounts", {
+  provider: text("provider"),
+  connectionType: text("connection_type"),
+  providerAccountKey: text("provider_account_key"),
+  lastImportedAt: timestamp("last_imported_at", { withTimezone: true }),
   id: uuid("id").primaryKey().defaultRandom(),
   name: text("name").notNull(),
   assetClass: assetClassEnum("asset_class").notNull(),
@@ -136,6 +140,11 @@ export const recurringOccurrences = pgTable("recurring_occurrences", {
     .defaultNow(),
 });
 export const transactions = pgTable("transactions", {
+  provider: text("provider"),
+  importBatchId: uuid("import_batch_id"),
+  contentHash: text("content_hash"),
+  netCashAmount: numeric("net_cash_amount", { precision: 38, scale: 18 }),
+  taxAmount: numeric("tax_amount", { precision: 38, scale: 18 }),
   id: uuid("id").primaryKey().defaultRandom(),
   accountId: uuid("account_id").notNull(),
   assetId: uuid("asset_id"),
@@ -455,4 +464,28 @@ export const importJobs = pgTable("import_jobs", {
     .defaultNow(),
   startedAt: timestamp("started_at", { withTimezone: true }),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+
+export const csvImportBatches = pgTable("csv_import_batches", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  creatorTokenId: uuid("creator_token_id").notNull(),
+  provider: text("provider").notNull(),
+  filename: text("filename").notNull(),
+  parserVersion: text("parser_version").notNull(),
+  status: text("status").notNull().default("preview"),
+  revision: integer("revision").notNull().default(1),
+  staged: jsonb("staged"),
+  preview: jsonb("preview").notNull(),
+  result: jsonb("result"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+});
+export const csvImportAccounts = pgTable("csv_import_accounts", {
+  batchId: uuid("batch_id").notNull(),
+  accountId: uuid("account_id").notNull(),
+  importedRows: integer("imported_rows").notNull(),
+  duplicateRows: integer("duplicate_rows").notNull(),
 });

@@ -1,3 +1,4 @@
+import { expireCsvImports } from "./modules/imports/csv/service.js";
 import { EVMHistoryService } from "./modules/integrations/alchemy/history.js";
 import { BotService } from "./modules/bots/service.js";
 import { SyncService } from "./modules/integrations/service.js";
@@ -52,6 +53,7 @@ while (!stopping) {
         .finally(() => {
           historyTask = undefined;
         });
+    await expireCsvImports(database.sql);
     await sync.runQueued();
     await bots.runDue();
     const day = new Date().toISOString().slice(0, 10);

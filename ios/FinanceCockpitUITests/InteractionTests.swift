@@ -279,7 +279,7 @@ import XCTest
     for _ in 0..<5 { if wallet.isHittable { break }; app.swipeUp() }
     wallet.tap()
     XCTAssertTrue(app.staticTexts["EVM wallet"].waitForExistence(timeout: 5))
-    XCTAssertTrue(app.staticTexts["History is building"].exists)
+    XCTAssertTrue(app.staticTexts["No recorded values for this period"].exists)
     XCTAssertFalse(app.staticTexts["evm_wallet"].exists)
     XCTAssertFalse(app.buttons["Retry sync"].exists)
     let balance = app.staticTexts["ETH"]
