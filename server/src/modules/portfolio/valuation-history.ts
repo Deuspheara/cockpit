@@ -3,6 +3,7 @@ import { Decimal, money } from "../../shared/decimal.js";
 import type { Coverage, ValuationIssue } from "./coverage.js";
 import { chartInterval } from "./sampling.js";
 import type { Range } from "./service.js";
+import { manualAccountHistory } from "./manual-history.js";
 export interface HistoricalValue {
   accountId: string;
   at: string;
@@ -102,23 +103,35 @@ export function aggregateHistory(
 }
 export async function valuationHistory(
   sql: Sql | TransactionSql,
-  accounts: { id: string; name: string }[],
+  accounts: { id: string; name: string; sourceType?: string }[],
   since: Date,
   currency: string,
   range: Range,
 ) {
   if (!accounts.length) return [];
-  const ids = accounts.map((a) => a.id);
-  const rows = await sql<
-    {
-      accountId: string;
-      at: Date;
-      value: string | null;
-      complete: boolean;
-      coverage: Partial<Coverage>;
-      source: string;
-    }[]
-  >`
+  const ledgerAccounts = await sql<{ accountId: string }[]>`
+    SELECT DISTINCT account_id FROM transactions
+    WHERE account_id IN ${sql(accounts.map((account) => account.id))} AND NOT is_voided`;
+  const ledgerIds = new Set(ledgerAccounts.map((row) => row.accountId));
+  const manual = accounts.filter(
+    (account) => account.sourceType === "manual" && ledgerIds.has(account.id),
+  );
+  const providerAccounts = accounts.filter(
+    (account) =>
+      !manual.some((manualAccount) => manualAccount.id === account.id),
+  );
+  const ids = providerAccounts.map((a) => a.id);
+  const rows = ids.length
+    ? await sql<
+        {
+          accountId: string;
+          at: Date;
+          value: string | null;
+          complete: boolean;
+          coverage: Partial<Coverage>;
+          source: string;
+        }[]
+      >`
     SELECT v.account_id,b.captured_at AS at,v.total_value::text AS value,v.complete,v.coverage,'recorded_snapshot' AS source
     FROM account_valuations v JOIN valuation_batches b ON b.id=v.batch_id
     WHERE v.account_id IN ${sql(ids)} AND b.base_currency=${currency} AND b.captured_at>=${since}
@@ -134,9 +147,11 @@ export async function valuationHistory(
     LEFT JOIN LATERAL (SELECT rate FROM fx_quotes q WHERE q.base_currency=h.currency AND q.quote_currency=${currency}
       AND q.quoted_at<=h.at AND q.quoted_at>h.at-interval '7 days' ORDER BY q.quoted_at DESC LIMIT 1) fx ON true
     WHERE h.account_id IN ${sql(ids)} AND h.at>=${since}
-    ORDER BY at`;
+    ORDER BY at`
+    : [];
+  const manualRows = await manualAccountHistory(sql, manual, since, currency);
   return aggregateHistory(
-    rows.map((r) => ({ ...r, at: r.at.toISOString() })),
+    [...rows.map((r) => ({ ...r, at: r.at.toISOString() })), ...manualRows],
     accounts,
     range,
   );

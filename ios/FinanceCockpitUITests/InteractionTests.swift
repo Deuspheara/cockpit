@@ -280,7 +280,8 @@ import XCTest
   private func checkLayout(largeText: Bool) {
     let app = XCUIApplication()
     app.launchArguments =
-      ["--ui-fixtures", "--wallet-layout", "--dark"] + (largeText ? ["--large-text"] : [])
+      ["--ui-fixtures", "--wallet-layout", "--dark", "--advanced-ui"]
+      + (largeText ? ["--large-text"] : [])
     app.launch()
     let wallet = app.buttons.containing(.staticText, identifier: "Base Eth").firstMatch
     XCTAssertTrue(wallet.waitForExistence(timeout: 15))

@@ -15,6 +15,7 @@ import {
   type ImportIssue,
   type Instrument,
 } from "./parser.js";
+import { linkSecurityAsset } from "../../market-data/service.js";
 
 type SQL = Sql | TransactionSql;
 export interface Destination {
@@ -64,6 +65,8 @@ interface Result {
   skipped: number;
   conflicts: number;
   positionsUpdated: number;
+  marketDataQueued: number;
+  unresolvedSecurities: number;
   completedAt: string;
   accounts: {
     id: string;
@@ -360,18 +363,6 @@ export class CsvImportService {
         continue;
       }
       const existingAsset = assets.find((a) => this.matches(a, t.instrument));
-      const assetCurrency =
-        existingAsset?.quoteCurrency ??
-        instrumentCurrencies.get(t.instrument.key) ??
-        t.currency;
-      if (assetCurrency !== t.currency) {
-        g.summary.skipped++;
-        issue(
-          "ASSET_CURRENCY_MISMATCH",
-          "This instrument uses a different accounting currency. Currency conversion must be resolved before importing this row.",
-        );
-        continue;
-      }
       instrumentCurrencies.set(t.instrument.key, t.currency);
       seen.set(key, t.hash);
       g.summary.new++;
@@ -454,6 +445,8 @@ export class CsvImportService {
         skipped: preview.summary.skipped,
         conflicts: preview.summary.conflicts,
         positionsUpdated: 0,
+        marketDataQueued: 0,
+        unresolvedSecurities: 0,
         completedAt: new Date().toISOString(),
         accounts: [],
       };
@@ -478,11 +471,34 @@ export class CsvImportService {
           );
         if (matches[0]) {
           assetIds.set(key, matches[0].id);
-          continue;
+        } else {
+          const assetId = randomUUID();
+          await tx`INSERT INTO assets(id,asset_type,symbol,name,quote_currency,external_ids) VALUES(${assetId},${instrument.assetType},${instrument.symbol},${instrument.name},${instrument.currency},${tx.json(instrument.isin ? { isin: instrument.isin } : instrument.assetType === "crypto" ? { tradeRepublic: instrument.key } : {})})`;
+          assetIds.set(key, assetId);
         }
-        const assetId = randomUUID();
-        await tx`INSERT INTO assets(id,asset_type,symbol,name,quote_currency,external_ids) VALUES(${assetId},${instrument.assetType},${instrument.symbol},${instrument.name},${instrument.currency},${tx.json(instrument.isin ? { isin: instrument.isin } : instrument.assetType === "crypto" ? { tradeRepublic: instrument.key } : {})})`;
-        assetIds.set(key, assetId);
+        if (instrument.isin)
+          await linkSecurityAsset(tx, {
+            assetId: assetIds.get(key)!,
+            isin: instrument.isin,
+            name: instrument.name,
+            assetType: instrument.assetType,
+          });
+      }
+      const securityIds = [
+        ...new Set(
+          [...instruments.entries()].flatMap(([key, instrument]) =>
+            instrument.isin ? [assetIds.get(key)!] : [],
+          ),
+        ),
+      ];
+      if (securityIds.length) {
+        const states = await tx<{ id: string; identityStatus: string }[]>`
+          SELECT DISTINCT s.id,s.identity_status FROM securities s JOIN assets a ON a.security_id=s.id
+          WHERE a.id IN ${tx(securityIds)}`;
+        result.marketDataQueued = states.length;
+        result.unresolvedSecurities = states.filter(
+          (state) => state.identityStatus !== "identity_resolved",
+        ).length;
       }
       const rows: Record<string, unknown>[] = [];
       for (const d of stage.destinations.filter((d) => d.included)) {

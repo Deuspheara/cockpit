@@ -66,6 +66,16 @@ struct AccountDetailView: View {
           }
           VStack(alignment: .leading, spacing: 12) {
             Text("Holdings").font(.headline)
+            if (detail.dashboard.accounts.first?.unvaluedPositions ?? 0) > 0 {
+              NavigationLink {
+                MarketDataReviewView()
+              } label: {
+                Label(
+                  "\(detail.dashboard.accounts.first?.unvaluedPositions ?? 0) holdings need market data",
+                  systemImage: "exclamationmark.triangle")
+              }
+              .font(.subheadline).foregroundStyle(.orange)
+            }
             if detail.account.sourceType == "manual", detail.positions.isEmpty {
               Button(
                 detail.account.assetClass == "cash" ? "Add your balance" : "Add your first holding"
@@ -131,6 +141,20 @@ struct AccountDetailView: View {
                   Text(
                     "\(position.stale ? "Stale · " : "")\(at.formatted(date: .abbreviated, time: .shortened))"
                   ).font(.caption).foregroundStyle(.secondary)
+                }
+                if let marketDate = position.priceMarketDate {
+                  Text("\(position.priceSource?.uppercased() ?? "EOD") close · \(marketDate)")
+                    .font(.caption).foregroundStyle(.secondary)
+                }
+                if position.marketValue == nil, let reason = position.unpricedReason {
+                  Text(reason).font(.caption).foregroundStyle(.orange)
+                }
+                if let securityID = position.securityId,
+                  position.marketValue == nil || position.selectionStatus != "selected"
+                {
+                  NavigationLink("Review market data") {
+                    MarketDataSecurityView(securityID: securityID)
+                  }.font(.caption)
                 }
               }.padding(.vertical, 6)
               Divider()

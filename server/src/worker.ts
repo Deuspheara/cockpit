@@ -9,6 +9,7 @@ import { connectCache } from "./shared/cache.js";
 import { RecurringService } from "./modules/recurring/service.js";
 import { PortfolioService } from "./modules/portfolio/service.js";
 import { SnapshotService } from "./modules/snapshots/service.js";
+import { MarketDataService } from "./modules/market-data/service.js";
 const config = readConfig();
 const database = connectDatabase(config.DATABASE_URL),
   cache = connectCache(config.REDIS_URL);
@@ -16,7 +17,8 @@ const recurring = new RecurringService(database),
   snapshots = new SnapshotService(database, new PortfolioService(database));
 const sync = new SyncService(database, cache, config),
   fx = new FXService(database),
-  bots = new BotService(database);
+  bots = new BotService(database),
+  marketData = new MarketDataService(database, cache, config);
 const evmHistory = new EVMHistoryService(
   database,
   config.ALCHEMY_API_KEY,
@@ -55,6 +57,7 @@ while (!stopping) {
         });
     await expireCsvImports(database.sql);
     await sync.runQueued();
+    await marketData.runDue();
     await bots.runDue();
     const day = new Date().toISOString().slice(0, 10);
     if (lastFXDay !== day && Date.now() >= nextFXAttempt) {

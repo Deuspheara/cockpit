@@ -136,6 +136,16 @@ struct Position: Codable, Identifiable, Sendable {
   var liquidationPrice: Amount? = nil
   var realizedPnl: Amount? = nil
   var logoUrl: String? = nil
+  var securityId: UUID? = nil
+  var identityStatus: String? = nil
+  var selectionStatus: String? = nil
+  var priceStatus: String? = nil
+  var priceSource: String? = nil
+  var priceCurrency: String? = nil
+  var quoteUnitMultiplier: Amount? = nil
+  var priceMarketDate: String? = nil
+  var priceTimePrecision: String? = nil
+  var unpricedReason: String? = nil
 }
 struct Transaction: Codable, Identifiable, Sendable {
   let id: UUID

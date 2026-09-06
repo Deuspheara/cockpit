@@ -10,6 +10,7 @@ import { AppError, ConflictError, NotFoundError } from "../../shared/errors.js";
 import { transactionInput, observationInput } from "../ledger/schemas.js";
 import { ruleInput } from "../recurring/schemas.js";
 import { previousDay } from "../recurring/calendar.js";
+import { linkSecurityAsset } from "../market-data/service.js";
 
 // Only application services construct operations. HTTP/model callers submit typed intents.
 const tableSchema = z.enum([
@@ -67,6 +68,7 @@ const columns: Record<Table, string[]> = {
     "chain",
     "contractAddress",
     "externalIds",
+    "securityId",
     "createdAt",
     "updatedAt",
   ],
@@ -503,9 +505,14 @@ export class ChangeSetService {
         throw new ConflictError("Account no longer allows manual edits");
     }
     if (table === "transactions") {
-      const [asset] =
-        await tx`SELECT quote_currency FROM assets WHERE id=${String(data.assetId)}`;
-      if (asset && asset.quoteCurrency !== data.currency)
+      const [asset] = await tx`
+        SELECT quote_currency,security_id,external_ids FROM assets WHERE id=${String(data.assetId)}`;
+      if (
+        asset &&
+        !asset.securityId &&
+        !(asset.externalIds && typeof asset.externalIds.isin === "string") &&
+        asset.quoteCurrency !== data.currency
+      )
         throw new ConflictError(
           "Transaction currency must match the asset quote currency in V1",
         );
@@ -572,6 +579,20 @@ export class ChangeSetService {
       for (const op of ops) {
         const result = await this.execute(tx, op);
         executed.push(result);
+        if (op.table === "assets" && result.after) {
+          const ids = result.after.externalIds;
+          if (
+            ids &&
+            typeof ids === "object" &&
+            typeof (ids as Record<string, unknown>).isin === "string"
+          )
+            await linkSecurityAsset(tx, {
+              assetId: op.id,
+              isin: String((ids as Record<string, unknown>).isin),
+              name: String(result.after.name ?? result.after.symbol),
+              assetType: String(result.after.assetType),
+            });
+        }
         await tx`INSERT INTO audit_log(actor,action,entity_type,entity_id,change_set_id,before,after)
      VALUES('user',${undo ? "undo" : "apply"},${op.table},${op.id},${id},${op.before ? tx.json(json(op.before)) : null},${result.after ? tx.json(json(result.after)) : null})`;
       }

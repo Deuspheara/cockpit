@@ -13,6 +13,41 @@ struct SettingsView: View {
           Text("Advanced").tag(true)
         }.pickerStyle(.segmented).accessibilityIdentifier("interface-mode")
       }
+      Section("Tools") {
+        if environment.advancedMode {
+          NavigationLink {
+            BotsView()
+          } label: {
+            SettingsDestinationLabel(title: "Bots", detail: "Paper strategies", icon: .bot)
+          }
+          .accessibilityLabel("Bots")
+          .accessibilityHint("Opens paper strategies")
+        }
+        NavigationLink {
+          RecurringView()
+        } label: {
+          SettingsDestinationLabel(
+            title: "Recurring investments", detail: "Schedules and occurrences", icon: .recurring)
+        }
+        .accessibilityLabel("Recurring investments")
+        if environment.advancedMode {
+          NavigationLink {
+            DiagnosticsView()
+          } label: {
+            SettingsDestinationLabel(
+              title: "Integration diagnostics", detail: "Services and read-only connections",
+              icon: .connected)
+          }
+          .accessibilityLabel("Integration diagnostics")
+        }
+        NavigationLink {
+          MarketDataReviewView()
+        } label: {
+          SettingsDestinationLabel(
+            title: "Market data", detail: "Resolve securities and valuation prices", icon: .chart)
+        }
+        .accessibilityLabel("Market data")
+      }
       if environment.advancedMode {
         Section("Server") {
           LabeledContent("URL", value: environment.serverURL)
@@ -47,35 +82,6 @@ struct SettingsView: View {
             LabeledContent(
               "Vision model", value: ai.visionModel.isEmpty ? "Not set" : ai.visionModel)
           }
-        }
-
-      }
-      Section("Tools") {
-        if environment.advancedMode {
-          NavigationLink {
-            BotsView()
-          } label: {
-            SettingsDestinationLabel(title: "Bots", detail: "Paper strategies", icon: .bot)
-          }
-          .accessibilityLabel("Bots")
-          .accessibilityHint("Opens paper strategies")
-        }
-        NavigationLink {
-          RecurringView()
-        } label: {
-          SettingsDestinationLabel(
-            title: "Recurring investments", detail: "Schedules and occurrences", icon: .recurring)
-        }
-        .accessibilityLabel("Recurring investments")
-        if environment.advancedMode {
-          NavigationLink {
-            DiagnosticsView()
-          } label: {
-            SettingsDestinationLabel(
-              title: "Integration diagnostics", detail: "Services and read-only connections",
-              icon: .connected)
-          }
-          .accessibilityLabel("Integration diagnostics")
         }
       }
 

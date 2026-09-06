@@ -13,7 +13,15 @@ const schema = z.object({
   OPENROUTER_MODEL_PRIMARY: z.string().default(""),
   OPENROUTER_MODEL_VISION: z.string().default(""),
   EODHD_API_TOKEN: z.string().trim().default(""),
-  EODHD_DAILY_LIMIT: z.coerce.number().int().min(1).max(10000).default(20),
+  EODHD_DAILY_LIMIT: z.coerce.number().int().min(1).max(100000).default(20),
+  EODHD_PER_MINUTE_LIMIT: z.coerce.number().int().min(1).max(1000).default(20),
+  OPENFIGI_API_KEY: z.string().trim().default(""),
+  MARKET_DATA_MAX_CONCURRENCY: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(16)
+    .default(4),
   LOGO_DEV_PUBLISHABLE_KEY: z.string().trim().default(""),
   ALCHEMY_API_KEY: z.string().default(""),
   ALCHEMY_NETWORKS: z.string().default("eth-mainnet,base-mainnet,arb-mainnet"),

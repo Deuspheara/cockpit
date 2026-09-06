@@ -26,6 +26,13 @@ struct CSVImportView: View {
             LabeledContent("Rows skipped", value: "\(result.skipped)")
             LabeledContent("Conflicts", value: "\(result.conflicts)")
             LabeledContent("Positions updated", value: "\(result.positionsUpdated)")
+            if let queued = result.marketDataQueued, queued > 0 {
+              LabeledContent("Securities queued for pricing", value: "\(queued)")
+            }
+            if let unresolved = result.unresolvedSecurities, unresolved > 0 {
+              Text("\(unresolved) securities are resolving in the background. Import is complete.")
+                .font(.caption).foregroundStyle(.secondary)
+            }
             LabeledContent(
               "Last imported",
               value: result.completedAt.formatted(date: .abbreviated, time: .shortened))

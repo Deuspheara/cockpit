@@ -60,10 +60,10 @@ Apply the migration through the normal deployment migration step before shipping
 ## Verified on 6 September 2026
 
 - `make check`: TypeScript and repository-wide Prettier checks passed. No separate linter is configured.
-- `make test`: all **175 server tests in 30 files passed**, using the isolated Docker Node 24/PostgreSQL/Redis environment. The 5,000-row import and duplicate-check scenario completed in under one second in that environment; this is test-machine evidence, not a production SLA.
+- `make test`: all **187 server tests in 34 files passed**, using the isolated Docker Node 24/PostgreSQL/Redis environment. The 5,000-row import and duplicate-check scenario completed in under one second in that environment; this is test-machine evidence, not a production SLA.
 - `npm test -- --run test/csv-import.test.ts`: all **17 parser tests passed**.
 - `xcodegen generate` and `xcodebuild ... test` compiled the application for the installed iOS Simulator with Xcode 27 beta.
-- All **44 iOS unit tests** passed (42 Swift Testing cases plus two XCTest cases). All **24 UI tests** passed across the focused CSV run and regression/retest runs. The first full run exposed the off-screen CSV confirmation action and stale existing UI assertions; those were fixed and the affected tests passed on rerun. Overlapping intermediate UI runners were stopped and final verification ran sequentially.
+- All **47 iOS unit tests** passed (44 Swift Testing cases plus three XCTest cases). All **24 UI tests** passed across the focused CSV run and regression/retest runs. The first full run exposed the off-screen CSV confirmation action and stale existing UI assertions; those were fixed and the affected tests passed on rerun. Overlapping intermediate UI runners were stopped and final verification ran sequentially.
 - The native picker presentation, real file reading through the model, preview/confirmation, duplicate-only result, network recovery, existing-account entry and import history were exercised. Cloud-provider availability and physical-device signing remain environment-dependent checks.
 - `git diff --check`: passed. Raw financial exports were not copied into the repository or imported into the development/production database. Production deployment was not performed.
 

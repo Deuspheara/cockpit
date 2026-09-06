@@ -310,7 +310,7 @@ describe.skipIf(!url)("atomic CSV HTTP imports", () => {
       await db.sql`SELECT id FROM reconciliation_items WHERE account_id=${account.id} AND asset_id=${cash.assetId} AND status='open'`,
     ).toHaveLength(0);
   });
-  it("does not mix an existing security's accounting currency", async () => {
+  it("keeps transaction currency separate from a security's legacy quote currency", async () => {
     await db.sql`INSERT INTO assets(asset_type,symbol,name,quote_currency,external_ids) VALUES('equity','AAPL','Example','USD','{"isin":"US0378331005"}')`;
     const p = await preview(
       csv(1, {
@@ -324,8 +324,16 @@ describe.skipIf(!url)("atomic CSV HTTP imports", () => {
         amount: "-20",
       }),
     );
-    expect(p.summary.new).toBe(0);
-    expect(p.issues[0]!.code).toBe("ASSET_CURRENCY_MISMATCH");
+    expect(p.summary.new).toBe(1);
+    const completed = await confirm(p);
+    const [transaction] = await db.sql`
+      SELECT t.currency,a.quote_currency,a.security_id FROM transactions t
+      JOIN assets a ON a.id=t.asset_id WHERE t.provider='trade_republic'`;
+    expect(transaction).toMatchObject({
+      currency: "EUR",
+      quoteCurrency: "USD",
+    });
+    expect(transaction!.securityId).toBeTruthy();
   });
   it("imports several thousand rows across bulk-insert boundaries", async () => {
     const done = await confirm(await preview(csv(5000)));

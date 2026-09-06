@@ -47,35 +47,148 @@ interface Quote {
   quotedAt: Date;
   source: string;
 }
+interface SecurityPrice {
+  securityId: string;
+  identityStatus: string;
+  selectionStatus: string | null;
+  priceStatus: string | null;
+  message: string | null;
+  provider: string | null;
+  close: string | null;
+  currency: string | null;
+  unitMultiplier: string | null;
+  marketDate: string | null;
+  timePrecision: "date" | "instant" | null;
+  corporateActionDate: string | null;
+}
+interface FxQuote {
+  baseCurrency: string;
+  quoteCurrency: string;
+  rate: string;
+  quotedAt: Date;
+}
 export class PortfolioService {
   constructor(private database: { sql: Sql | TransactionSql }) {}
   async positions(accountId?: string): Promise<Map<string, PositionView[]>> {
-    const [accounts, assets, transactions, observations, quotes] =
-      await Promise.all([
-        this.database.sql<
-          Account[]
-        >`SELECT * FROM accounts WHERE NOT is_archived`,
-        this.database.sql<Asset[]>`SELECT * FROM assets`,
-        this.database.sql<
-          Transaction[]
-        >`SELECT * FROM transactions WHERE NOT is_voided ORDER BY occurred_at,id`,
-        this.database.sql<
-          Observation[]
-        >`SELECT DISTINCT ON(account_id,asset_id) * FROM holding_observations ORDER BY account_id,asset_id,observed_at DESC,created_at DESC,id DESC`,
-        this.database.sql<
-          Quote[]
-        >`SELECT DISTINCT ON(asset_id) * FROM price_quotes ORDER BY asset_id,quoted_at DESC,id DESC`,
-      ]);
+    const [
+      accounts,
+      assets,
+      transactions,
+      observations,
+      quotes,
+      securityPrices,
+      fxRates,
+    ] = await Promise.all([
+      this.database.sql<
+        Account[]
+      >`SELECT * FROM accounts WHERE NOT is_archived`,
+      this.database.sql<Asset[]>`SELECT * FROM assets ORDER BY created_at,id`,
+      this.database.sql<
+        Transaction[]
+      >`SELECT * FROM transactions WHERE NOT is_voided ORDER BY occurred_at,id`,
+      this.database.sql<
+        Observation[]
+      >`SELECT DISTINCT ON(account_id,asset_id) * FROM holding_observations ORDER BY account_id,asset_id,observed_at DESC,created_at DESC,id DESC`,
+      this.database.sql<
+        Quote[]
+      >`SELECT DISTINCT ON(asset_id) * FROM price_quotes ORDER BY asset_id,quoted_at DESC,id DESC`,
+      this.database.sql<SecurityPrice[]>`
+          SELECT s.id AS security_id,s.identity_status,
+            selection.status AS selection_status,price.status AS price_status,
+            coalesce(price.message,selection.message) AS message,
+            m.provider,p.close,p.currency,p.unit_multiplier,p.market_date::text,p.time_precision,
+            history.metadata->>'corporateActionDate' AS corporate_action_date
+          FROM securities s
+          LEFT JOIN provider_mappings m ON m.id=s.preferred_mapping_id
+          LEFT JOIN market_data_state selection ON selection.security_id=s.id AND selection.stage='selection'
+          LEFT JOIN market_data_state price ON price.security_id=s.id AND price.stage='latest_price'
+          LEFT JOIN market_data_state history ON history.security_id=s.id AND history.stage='history'
+          LEFT JOIN LATERAL (
+            SELECT * FROM market_prices latest WHERE latest.mapping_id=m.id
+            ORDER BY latest.market_date DESC,latest.fetched_at DESC LIMIT 1
+          ) p ON true`,
+      this.database.sql<FxQuote[]>`
+          SELECT base_currency,quote_currency,rate,quoted_at FROM fx_quotes ORDER BY quoted_at`,
+    ]);
+    const fxAt = (from: string, to: string, at: Date) => {
+      if (from === to) return new Decimal(1);
+      const latest = (base: string, quoteCurrency: string) =>
+        fxRates
+          .filter(
+            (quote) =>
+              quote.baseCurrency === base &&
+              quote.quoteCurrency === quoteCurrency &&
+              quote.quotedAt <= at &&
+              at.getTime() - quote.quotedAt.getTime() <= 7 * 86400000,
+          )
+          .at(-1);
+      const direct = latest(from, to);
+      if (direct) return new Decimal(direct.rate);
+      const throughEur = latest(from, "EUR");
+      const fromEur = latest("EUR", to);
+      return throughEur && fromEur
+        ? new Decimal(throughEur.rate).mul(fromEur.rate)
+        : null;
+    };
+    const ledgerCostIn = (
+      rows: Transaction[],
+      targetCurrency: string,
+    ): DecimalString | undefined => {
+      let quantity = new Decimal(0);
+      let cost = new Decimal(0);
+      for (const transaction of [...rows].sort(
+        (left, right) =>
+          new Date(left.occurredAt).getTime() -
+            new Date(right.occurredAt).getTime() ||
+          left.id.localeCompare(right.id),
+      )) {
+        const amount = new Decimal(transaction.quantity);
+        if (transaction.type === "BUY") {
+          const rate = fxAt(
+            transaction.currency,
+            targetCurrency,
+            new Date(transaction.occurredAt),
+          );
+          if (!rate || transaction.unitPrice == null) return undefined;
+          quantity = quantity.plus(amount);
+          cost = cost.plus(
+            amount
+              .mul(transaction.unitPrice)
+              .plus(transaction.feeAmount ?? 0)
+              .plus(transaction.taxAmount ?? 0)
+              .mul(rate),
+          );
+        } else if (
+          transaction.type === "SELL" &&
+          quantity.gte(amount) &&
+          quantity.gt(0)
+        ) {
+          cost = cost.mul(quantity.minus(amount)).div(quantity);
+          quantity = quantity.minus(amount);
+        } else return undefined;
+      }
+      return money(cost);
+    };
     const result = new Map<string, PositionView[]>();
     for (const a of accounts.filter((a) => !accountId || a.id === accountId)) {
       const positions: PositionView[] = [];
       for (const asset of assets) {
+        const groupedAssets = asset.securityId
+          ? assets.filter(
+              (candidate) => candidate.securityId === asset.securityId,
+            )
+          : [asset];
+        if (groupedAssets[0]?.id !== asset.id) continue;
+        const groupedIds = new Set(groupedAssets.map((item) => item.id));
         const ledger = transactions.filter(
-          (t) => t.accountId === a.id && t.assetId === asset.id,
+          (t) => t.accountId === a.id && groupedIds.has(t.assetId),
         );
-        const observed = observations.find(
-          (o) => o.accountId === a.id && o.assetId === asset.id,
-        );
+        const observed = observations
+          .filter((o) => o.accountId === a.id && groupedIds.has(o.assetId))
+          .sort(
+            (left, right) =>
+              right.observedAt.getTime() - left.observedAt.getTime(),
+          )[0];
         const cashTrades =
           asset.assetType === "cash" && a.sourceType === "manual"
             ? transactions.filter(
@@ -130,30 +243,76 @@ export class PortfolioService {
           quantity = money(cash);
         }
         if (quantity !== undefined && new Decimal(quantity).isZero()) continue;
-        const quote = quotes.find((q) => q.assetId === asset.id);
+        const quote = quotes
+          .filter((q) => groupedIds.has(q.assetId))
+          .sort(
+            (left, right) => right.quotedAt.getTime() - left.quotedAt.getTime(),
+          )[0];
+        const securityPrice = asset.securityId
+          ? securityPrices.find((item) => item.securityId === asset.securityId)
+          : undefined;
+        const corporateActionBlocked = !!(
+          securityPrice?.corporateActionDate &&
+          securityPrice.marketDate &&
+          securityPrice.marketDate >= securityPrice.corporateActionDate
+        );
         let price =
           asset.assetType === "cash"
             ? money(1)
-            : quote
-              ? money(quote.price)
-              : observed?.unitPrice != null
-                ? money(observed.unitPrice)
-                : undefined;
+            : securityPrice?.close
+              ? money(securityPrice.close)
+              : quote
+                ? money(quote.price)
+                : observed?.unitPrice != null
+                  ? money(observed.unitPrice)
+                  : undefined;
         let currency =
           asset.assetType === "cash"
             ? asset.quoteCurrency
-            : (quote?.currency ?? observed?.currency ?? asset.quoteCurrency);
+            : (securityPrice?.currency ??
+              quote?.currency ??
+              observed?.currency ??
+              asset.quoteCurrency);
         // A provider's equity/position marketValue may differ from notional quantity × price for perpetuals.
         let marketValue =
-          !useLedger && observed?.marketValue != null
-            ? money(observed.marketValue)
-            : price && quantity !== undefined
-              ? money(new Decimal(quantity).mul(price))
-              : undefined;
-        if (!useLedger && observed?.marketValue != null)
+          securityPrice?.close &&
+          quantity !== undefined &&
+          !corporateActionBlocked
+            ? money(
+                new Decimal(quantity)
+                  .mul(securityPrice.close)
+                  .mul(securityPrice.unitMultiplier ?? 1),
+              )
+            : !useLedger && observed?.marketValue != null
+              ? money(observed.marketValue)
+              : !securityPrice?.close && price && quantity !== undefined
+                ? money(new Decimal(quantity).mul(price))
+                : undefined;
+        if (
+          !securityPrice?.close &&
+          !useLedger &&
+          observed?.marketValue != null
+        )
           currency = observed.currency;
+        let fxMissing = false;
+        if (
+          asset.securityId &&
+          price &&
+          marketValue !== undefined &&
+          a.sourceType === "manual"
+        ) {
+          const rate = fxAt(currency, a.baseCurrency, new Date());
+          if (rate) marketValue = money(new Decimal(marketValue).mul(rate));
+          else {
+            marketValue = undefined;
+            fxMissing = true;
+          }
+          currency = a.baseCurrency;
+        }
         const costBasis = useLedger
-          ? ledgerCost(ledger)
+          ? asset.securityId
+            ? ledgerCostIn(ledger, a.baseCurrency)
+            : ledgerCost(ledger)
           : observed?.costBasis != null
             ? money(observed.costBasis)
             : undefined;
@@ -163,14 +322,40 @@ export class PortfolioService {
         const observedAt = timestamp
           ? new Date(timestamp).toISOString()
           : undefined;
-        const stale =
-          !observedAt ||
-          Date.now() - new Date(observedAt).getTime() >
-            (a.sourceType === "manual" ? 86400000 : 300000) ||
-          (typeof observed?.metadata.priceQuotedAt === "string" &&
-            Date.now() - new Date(observed.metadata.priceQuotedAt).getTime() >
-              86400000);
+        const stale = securityPrice
+          ? securityPrice.priceStatus !== "price_current"
+          : !observedAt ||
+            Date.now() - new Date(observedAt).getTime() >
+              (a.sourceType === "manual" ? 86400000 : 300000) ||
+            (typeof observed?.metadata.priceQuotedAt === "string" &&
+              Date.now() - new Date(observed.metadata.priceQuotedAt).getTime() >
+                86400000);
         positions.push({
+          securityId: asset.securityId ?? undefined,
+          identityStatus: securityPrice?.identityStatus,
+          selectionStatus: securityPrice?.selectionStatus ?? undefined,
+          priceStatus: securityPrice?.priceStatus ?? undefined,
+          priceSource: securityPrice?.provider ?? quote?.source,
+          priceCurrency: securityPrice?.currency ?? quote?.currency,
+          quoteUnitMultiplier: securityPrice?.unitMultiplier
+            ? money(securityPrice.unitMultiplier)
+            : undefined,
+          priceMarketDate: securityPrice?.marketDate ?? undefined,
+          priceTimePrecision: securityPrice?.timePrecision ?? undefined,
+          unpricedReason:
+            (marketValue === undefined || fxMissing) &&
+            asset.assetType !== "cash"
+              ? corporateActionBlocked
+                ? `A possible quantity-changing corporate action needs review from ${securityPrice!.corporateActionDate}`
+                : fxMissing
+                  ? `No recent ${securityPrice?.currency}/${a.baseCurrency} conversion is available`
+                  : (securityPrice?.message ??
+                    (securityPrice?.identityStatus === "identity_not_found"
+                      ? "No exact market-data identity was found"
+                      : securityPrice?.identityStatus === "identity_ambiguous"
+                        ? "The security identity needs review"
+                        : "No usable market price is available"))
+              : undefined,
           assetId: asset.id,
           priceIssue:
             typeof observed?.metadata.priceIssue === "string"
@@ -193,7 +378,9 @@ export class PortfolioService {
           unrealizedPnl:
             !useLedger && observed?.unrealizedPnl != null
               ? money(observed.unrealizedPnl)
-              : costBasis && marketValue && currency === asset.quoteCurrency
+              : costBasis &&
+                  marketValue &&
+                  (currency === asset.quoteCurrency || !!asset.securityId)
                 ? money(new Decimal(marketValue).minus(costBasis))
                 : undefined,
           realizedPnl:
@@ -291,7 +478,8 @@ export class PortfolioService {
           quotedAt: p.priceQuotedAt,
           message:
             p.marketValue === undefined
-              ? (p.priceIssue ??
+              ? (p.unpricedReason ??
+                p.priceIssue ??
                 "No usable price is available for this holding")
               : `No recent ${p.currency}/${currency} conversion is available`,
           retryable: true,

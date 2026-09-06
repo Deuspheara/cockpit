@@ -1,6 +1,11 @@
 import SwiftUI
 
 struct Diagnostics: Decodable, Sendable {
+  struct MarketDataJobs: Decodable, Sendable {
+    let queued: Int
+    let running: Int
+    let failed: Int
+  }
   let dbReachable: Bool
   let redisReachable: Bool
   let workerHeartbeat: Date?
@@ -8,6 +13,9 @@ struct Diagnostics: Decodable, Sendable {
   let chatConfigured: Bool
   let visionConfigured: Bool
   let walletConfigured: Bool
+  var eodhdConfigured: Bool? = nil
+  var openFigiKeyConfigured: Bool? = nil
+  var marketDataJobs: MarketDataJobs? = nil
 }
 struct DiagnosticsView: View {
   @Environment(AppEnvironment.self) private var environment
@@ -31,6 +39,16 @@ struct DiagnosticsView: View {
             "Screenshot import", value: diagnostics.visionConfigured ? "Ready" : "Not ready")
           LabeledContent(
             "Alchemy", value: diagnostics.walletConfigured ? "Configured" : "Not configured")
+          LabeledContent(
+            "EODHD", value: diagnostics.eodhdConfigured == true ? "Configured" : "Not configured")
+          LabeledContent(
+            "OpenFIGI",
+            value: diagnostics.openFigiKeyConfigured == true ? "API key configured" : "Free access")
+          if let jobs = diagnostics.marketDataJobs {
+            LabeledContent(
+              "Market data jobs",
+              value: "\(jobs.queued) queued · \(jobs.running) running · \(jobs.failed) failed")
+          }
         }
       }
       Section("Read-only connections") {

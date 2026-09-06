@@ -70,25 +70,24 @@ export class FXService {
         502,
       );
     const days = parseECBHistory(await response.text());
-    const rows = days.flatMap((day) => {
-      const usd = day.quotes.find((q) => q.currency === "USD")!;
-      return [
+    const rows = days.flatMap((day) =>
+      day.quotes.flatMap((quote) => [
         {
-          base_currency: "USD",
+          base_currency: quote.currency,
           quote_currency: "EUR",
-          rate: money(new Decimal(1).div(usd.rate)),
+          rate: money(new Decimal(1).div(quote.rate)),
           quoted_at: day.date,
           source: "ecb",
         },
         {
           base_currency: "EUR",
-          quote_currency: "USD",
-          rate: usd.rate,
+          quote_currency: quote.currency,
+          rate: quote.rate,
           quoted_at: day.date,
           source: "ecb",
         },
-      ];
-    });
+      ]),
+    );
     await this.database.sql.begin(async (tx) => {
       for (let offset = 0; offset < rows.length; offset += 500)
         await tx`INSERT INTO fx_quotes ${tx(rows.slice(offset, offset + 500))} ON CONFLICT DO NOTHING`;

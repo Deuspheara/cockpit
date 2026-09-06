@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Database } from "../../db/index.js";
 import { currency } from "../../shared/decimal.js";
+import { linkSecurityAsset } from "../market-data/service.js";
 export const assetInput = z
   .object({
     assetType: z.enum([
@@ -29,6 +30,7 @@ export interface Asset {
   chain: string | null;
   contractAddress: string | null;
   externalIds: Record<string, string>;
+  securityId?: string | null;
 }
 export class AssetService {
   constructor(private database: Database) {}
@@ -39,10 +41,19 @@ export class AssetService {
   }
   async create(input: unknown) {
     const a = assetInput.parse(input);
-    const [asset] = await this.database.sql<
-      Asset[]
-    >`INSERT INTO assets(asset_type,symbol,name,quote_currency,chain,contract_address,external_ids)
-   VALUES(${a.assetType},${a.symbol},${a.name},${a.quoteCurrency},${a.chain ?? null},${a.contractAddress ?? null},${this.database.sql.json(a.externalIds)}) RETURNING *`;
-    return asset!;
+    return this.database.sql.begin(async (tx) => {
+      const [asset] = await tx<
+        Asset[]
+      >`INSERT INTO assets(asset_type,symbol,name,quote_currency,chain,contract_address,external_ids)
+       VALUES(${a.assetType},${a.symbol},${a.name},${a.quoteCurrency},${a.chain ?? null},${a.contractAddress ?? null},${tx.json(a.externalIds)}) RETURNING *`;
+      if (a.externalIds.isin)
+        await linkSecurityAsset(tx, {
+          assetId: asset!.id,
+          isin: a.externalIds.isin,
+          name: a.name,
+          assetType: a.assetType,
+        });
+      return asset!;
+    });
   }
 }

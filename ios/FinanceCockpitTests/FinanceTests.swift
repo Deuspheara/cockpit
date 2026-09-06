@@ -79,6 +79,36 @@ struct FinanceTests {
     #expect(ProviderBrand.resolve(sourceType: "My Hyperliquid copy") == .generic)
   }
 
+  @Test func decodesMarketDataReviewAndDateOnlyPriceMetadata() throws {
+    let payload = Data(
+      """
+      {
+        "id":"00000000-0000-4000-8000-000000000001",
+        "isin":"US0378331005",
+        "name":"Apple Inc",
+        "assetType":"equity",
+        "identityStatus":"identity_resolved",
+        "preferredMappingId":"00000000-0000-4000-8000-000000000002",
+        "selectionLocked":true,
+        "revision":3,
+        "states":[{"stage":"latest_price","status":"price_current","errorClass":null,"message":null,"nextRetryAt":null}],
+        "mappings":[{
+          "id":"00000000-0000-4000-8000-000000000002",
+          "provider":"eodhd","providerSymbol":"AAPL.US","providerExchange":"US",
+          "verificationStatus":"verified","ticker":"AAPL","mic":null,"name":"Apple Inc",
+          "quoteCurrency":"USD","quoteUnit":"major","unitMultiplier":"1",
+          "timezone":null,"active":true,"selected":true,"selectable":true
+        }],
+        "latestPrice":{"close":"230.25","currency":"USD","marketDate":"2026-09-04","timePrecision":"date"}
+      }
+      """.utf8)
+    let detail = try APIClient.decoder().decode(MarketDataSecurityDetail.self, from: payload)
+    #expect(detail.selectionLocked)
+    #expect(detail.mappings.first?.selectable == true)
+    #expect(detail.latestPrice?.marketDate == "2026-09-04")
+    #expect(detail.latestPrice?.timePrecision == "date")
+  }
+
   @Test func activityPresentationUsesReadableTitlesIconsAndSigns() {
     let purchase = ActivityPresentation.resolve(kind: "BUY")
     #expect(purchase.title == "Purchase")

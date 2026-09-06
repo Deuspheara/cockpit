@@ -11,6 +11,8 @@ import { connectDatabase, type Database } from "./db/index.js";
 import { connectCache, type Cache } from "./shared/cache.js";
 import { AuthService } from "./modules/auth/service.js";
 import { AppError } from "./shared/errors.js";
+import { MarketDataService } from "./modules/market-data/service.js";
+import { registerMarketDataRoutes } from "./modules/market-data/routes.js";
 
 export function aiConfigurationStatus(
   config: Pick<
@@ -36,6 +38,7 @@ export async function createApp(
     dependencies?.database ?? connectDatabase(config.DATABASE_URL);
   const cache = dependencies?.cache ?? connectCache(config.REDIS_URL);
   const auth = new AuthService(database);
+  const marketData = new MarketDataService(database, cache, config);
   const app = Fastify({
     bodyLimit: 1024 * 1024,
     logger: {
@@ -152,9 +155,15 @@ export async function createApp(
       aiConfigured: ai.chatConfigured,
       ...ai,
       walletConfigured: !!config.ALCHEMY_API_KEY,
+      eodhdConfigured: !!config.EODHD_API_TOKEN,
+      openFigiKeyConfigured: !!config.OPENFIGI_API_KEY,
+      marketDataJobs: db
+        ? await marketData.diagnostics()
+        : { queued: 0, running: 0, failed: 0 },
     };
   });
   await registerFinanceRoutes(app, database, cache, config);
+  registerMarketDataRoutes(app, marketData);
   const importJobs = await registerImportRoutes(app, database, cache, config);
   const agentRuns = registerAgentRoutes(app, database, config);
   registerBotRoutes(app, database);

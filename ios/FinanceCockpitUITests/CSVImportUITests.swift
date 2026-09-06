@@ -47,7 +47,7 @@ import XCTest
   }
   func testExistingAccountImportAndHistory() {
     let app = XCUIApplication()
-    app.launchArguments = ["--ui-fixtures", "--csv-account"]
+    app.launchArguments = ["--ui-fixtures", "--csv-account", "--advanced-ui"]
     app.launch()
     XCTAssertTrue(app.buttons["1M"].waitForExistence(timeout: 15))
     let row = app.buttons.matching(

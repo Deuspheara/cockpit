@@ -93,6 +93,7 @@ export const assets = pgTable("assets", {
   chain: text("chain"),
   contractAddress: text("contract_address"),
   externalIds: jsonb("external_ids").notNull().default({}),
+  securityId: uuid("security_id"),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -488,4 +489,122 @@ export const csvImportAccounts = pgTable("csv_import_accounts", {
   accountId: uuid("account_id").notNull(),
   importedRows: integer("imported_rows").notNull(),
   duplicateRows: integer("duplicate_rows").notNull(),
+});
+
+export const securities = pgTable("securities", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  isin: text("isin").notNull(),
+  name: text("name").notNull(),
+  assetType: assetTypeEnum("asset_type").notNull(),
+  primaryAssetId: uuid("primary_asset_id"),
+  identityStatus: text("identity_status").notNull(),
+  identityEvidence: jsonb("identity_evidence").notNull().default({}),
+  preferredMappingId: uuid("preferred_mapping_id"),
+  selectionLocked: boolean("selection_locked").notNull().default(false),
+  revision: integer("revision").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const securityListings = pgTable("security_listings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  securityId: uuid("security_id").notNull(),
+  ticker: text("ticker").notNull(),
+  mic: text("mic"),
+  name: text("name").notNull(),
+  quoteCurrency: text("quote_currency").notNull(),
+  quoteUnit: text("quote_unit").notNull().default("major"),
+  unitMultiplier: numeric("unit_multiplier", { precision: 38, scale: 18 })
+    .notNull()
+    .default("1"),
+  timezone: text("timezone"),
+  active: boolean("active").notNull().default(true),
+  validFrom: date("valid_from"),
+  validTo: date("valid_to"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const providerMappings = pgTable("provider_mappings", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  listingId: uuid("listing_id").notNull(),
+  provider: text("provider").notNull(),
+  providerSymbol: text("provider_symbol").notNull(),
+  providerExchange: text("provider_exchange"),
+  feedScope: text("feed_scope").notNull().default("eod"),
+  verificationStatus: text("verification_status").notNull(),
+  evidence: jsonb("evidence").notNull().default({}),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  revision: integer("revision").notNull().default(1),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const marketPrices = pgTable("market_prices", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  mappingId: uuid("mapping_id").notNull(),
+  kind: text("kind").notNull().default("eod"),
+  open: numeric("open", { precision: 38, scale: 18 }),
+  high: numeric("high", { precision: 38, scale: 18 }),
+  low: numeric("low", { precision: 38, scale: 18 }),
+  close: numeric("close", { precision: 38, scale: 18 }).notNull(),
+  adjustedClose: numeric("adjusted_close", { precision: 38, scale: 18 }),
+  volume: numeric("volume", { precision: 38, scale: 8 }),
+  currency: text("currency").notNull(),
+  unitMultiplier: numeric("unit_multiplier", { precision: 38, scale: 18 })
+    .notNull()
+    .default("1"),
+  marketDate: date("market_date").notNull(),
+  sourceTimestamp: timestamp("source_timestamp", { withTimezone: true }),
+  timePrecision: text("time_precision").notNull().default("date"),
+  fetchedAt: timestamp("fetched_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  adjustmentBasis: text("adjustment_basis").notNull().default("raw"),
+  metadata: jsonb("metadata").notNull().default({}),
+});
+export const marketDataState = pgTable("market_data_state", {
+  securityId: uuid("security_id").notNull(),
+  stage: text("stage").notNull(),
+  status: text("status").notNull(),
+  errorClass: text("error_class"),
+  provider: text("provider"),
+  providerCode: text("provider_code"),
+  message: text("message"),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  lastSuccessAt: timestamp("last_success_at", { withTimezone: true }),
+  nextRetryAt: timestamp("next_retry_at", { withTimezone: true }),
+  metadata: jsonb("metadata").notNull().default({}),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const marketDataJobs = pgTable("market_data_jobs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  securityId: uuid("security_id").notNull(),
+  jobType: text("job_type").notNull(),
+  mappingRevision: integer("mapping_revision"),
+  status: text("status").notNull().default("queued"),
+  attempts: integer("attempts").notNull().default(0),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  failure: jsonb("failure"),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
 });

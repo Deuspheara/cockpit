@@ -22,6 +22,8 @@ final class NavigationTests: XCTestCase {
     XCTAssertTrue(portfolio.waitForExistence(timeout: 5))
     app.tabBars.buttons["Settings"].tap()
     XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+    let advanced = app.segmentedControls["interface-mode"].buttons["Advanced"]
+    if !advanced.isSelected { advanced.tap() }
     app.buttons["Bots"].tap()
     XCTAssertTrue(app.navigationBars["Bots"].waitForExistence(timeout: 5))
     app.navigationBars.buttons.element(boundBy: 0).tap()

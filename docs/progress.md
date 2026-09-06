@@ -47,3 +47,9 @@ Final analytics validation: **51 backend tests across 13 files, 6 Swift tests an
 Implemented durable authenticated chat SSE, observable tool activity, safe OpenRouter errors and public capability diagnostics, explicit cancellation, checkpointed retries, and native Textual Markdown. Local removal of temperature/parallel_tool_calls was preserved. Proposal creation and tool checkpoints share a transaction; applying financial changes remains an explicit review action. Disconnected clients leave bounded server work running and restore it by cursor.
 
 Validation, reproducible commands, exact VPS rebuild steps, protocol details, screenshots, and outstanding live-environment checks are recorded in [chat-streaming.md](chat-streaming.md). No push or deployment was performed during validation.
+
+### Shared security and EOD valuation (2026-09-06)
+
+Added migration 0014, shared ISIN identities/listings, exact-ISIN EODHD routing, OpenFIGI evidence, leased PostgreSQL resolution/refresh/history jobs, raw daily-price storage, dated FX valuation, manual-ledger EOD chart reconstruction, corporate-action guards, authenticated review APIs, and the native Market Data review/lock flow. Imports and change sets only enqueue provider work and remain successful when market data is unavailable.
+
+Validation: `make check`, `git diff --check`, migration-from-0013 coverage, and all **187 backend tests across 34 files** passed. The app was regenerated with XcodeGen; all **47 iOS unit tests** passed, including market-data/date-only decoding, and all **4 previously affected native UI cases** passed after their interface-mode preconditions were made explicit and the Tools section was made immediately accessible. No live provider credentials, production deployment, or seeded-backlog drain was performed; coverage and entitlement metrics remain post-deployment rollout work.

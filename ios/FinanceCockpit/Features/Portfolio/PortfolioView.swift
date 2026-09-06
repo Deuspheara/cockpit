@@ -222,7 +222,11 @@ struct PortfolioView: View {
                     .monospacedDigit()
                     .foregroundStyle(.primary)
                   if !account.complete {
-                    Text("Partial value").font(.caption).foregroundStyle(.orange)
+                    Text(
+                      account.unvaluedPositions > 0
+                        ? "Valued subtotal · \(account.unvaluedPositions) unpriced"
+                        : "Valued subtotal"
+                    ).font(.caption).foregroundStyle(.orange)
                   }
                 }
                 AppIcon(name: .arrowRight, size: 15).foregroundStyle(.tertiary)

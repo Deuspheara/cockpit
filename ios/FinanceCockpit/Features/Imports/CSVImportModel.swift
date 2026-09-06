@@ -40,6 +40,8 @@ struct CSVImportResult: Codable, Sendable {
   let skipped: Int
   let conflicts: Int
   let positionsUpdated: Int
+  var marketDataQueued: Int? = nil
+  var unresolvedSecurities: Int? = nil
   let completedAt: Date
 }
 struct CSVImportPreview: Codable, Identifiable, Sendable {
