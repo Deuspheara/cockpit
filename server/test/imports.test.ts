@@ -13,6 +13,10 @@ import {
   estimateQuantity,
   isEligiblePreviousClose,
 } from "../src/modules/imports/market-data.js";
+import {
+  MarketProviderError,
+  type EODHDRequestGate,
+} from "../src/modules/market-data/providers.js";
 const position = {
   symbol: "CW8",
   quantity: "18.23",
@@ -119,6 +123,19 @@ describe("EODHD enrichment safeguards", () => {
       },
     };
   }
+  const gate = (blocked = false): EODHDRequestGate => ({
+    async run(request) {
+      if (blocked)
+        throw new MarketProviderError(
+          "quota_exhausted",
+          "The configured EODHD daily call budget was reached.",
+        );
+      return request();
+    },
+    async blockedUntil() {
+      return null;
+    },
+  });
   it("uses exact decimal FX math and calendar-day quote eligibility", () => {
     expect(estimateQuantity("1783.70", "95.125", "1.02")).toBe("18.38344799");
     expect(
@@ -137,6 +154,7 @@ describe("EODHD enrichment safeguards", () => {
     const market = new EODHDMarketData(
       redis as never,
       { EODHD_API_TOKEN: "fixture", EODHD_DAILY_LIMIT: 20 },
+      gate(),
       async () => {
         requests++;
         return Response.json([
@@ -169,6 +187,7 @@ describe("EODHD enrichment safeguards", () => {
     const market = new EODHDMarketData(
       redis as never,
       { EODHD_API_TOKEN: "fixture", EODHD_DAILY_LIMIT: 20 },
+      gate(),
       async () => {
         if (offline) return new Response("unavailable", { status: 503 });
         return Response.json([
@@ -206,10 +225,14 @@ describe("EODHD enrichment safeguards", () => {
   });
   it("reports missing configuration instead of pretending there are no matching investments", async () => {
     let warning = "";
-    const market = new EODHDMarketData(cache() as never, {
-      EODHD_API_TOKEN: "",
-      EODHD_DAILY_LIMIT: 20,
-    });
+    const market = new EODHDMarketData(
+      cache() as never,
+      {
+        EODHD_API_TOKEN: "",
+        EODHD_DAILY_LIMIT: 20,
+      },
+      gate(),
+    );
     expect(
       await market.search("fund", undefined, (message) => {
         warning = message;
@@ -217,11 +240,12 @@ describe("EODHD enrichment safeguards", () => {
     ).toEqual([]);
     expect(warning).toContain("EODHD_API_TOKEN");
   });
-  it("falls back without network access after the Redis daily budget", async () => {
+  it("falls back without network access after the shared daily budget", async () => {
     let requested = false;
     const market = new EODHDMarketData(
       cache(20) as never,
       { EODHD_API_TOKEN: "fixture", EODHD_DAILY_LIMIT: 20 },
+      gate(true),
       async () => {
         requested = true;
         return Response.json([]);
@@ -234,6 +258,7 @@ describe("EODHD enrichment safeguards", () => {
     const failed = new EODHDMarketData(
       cache() as never,
       { EODHD_API_TOKEN: "fixture", EODHD_DAILY_LIMIT: 20 },
+      gate(),
       async () => {
         throw new Error("offline");
       },

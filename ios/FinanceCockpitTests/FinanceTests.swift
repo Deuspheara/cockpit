@@ -109,6 +109,22 @@ struct FinanceTests {
     #expect(detail.latestPrice?.timePrecision == "date")
   }
 
+  @Test func marketDataResolutionReasonsRemainActionable() {
+    #expect(
+      marketResolutionMessage(
+        reason: "listing_selection_required", fallback: nil, retryAt: nil)
+        == "Listing selection required")
+    #expect(
+      marketResolutionMessage(
+        reason: "exact_isin_not_found", fallback: nil, retryAt: nil)
+        == "No exact-ISIN EODHD listing found")
+    let quota = marketResolutionMessage(
+      reason: "verification_quota_delayed", fallback: nil,
+      retryAt: Date(timeIntervalSince1970: 1_788_739_205))
+    #expect(quota?.contains("Verification delayed until EODHD quota resets") == true)
+    #expect(quota?.contains("Next retry") == true)
+  }
+
   @Test func activityPresentationUsesReadableTitlesIconsAndSigns() {
     let purchase = ActivityPresentation.resolve(kind: "BUY")
     #expect(purchase.title == "Purchase")

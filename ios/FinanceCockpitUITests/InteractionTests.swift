@@ -52,6 +52,33 @@ import XCTest
     capture("Base backfill progress", app)
   }
 
+  func testMarketDataListingSelectionReasonAndVerifiedCandidate() {
+    let app = launch()
+    app.tabBars.buttons["Settings"].tap()
+    app.buttons["Market data"].tap()
+    XCTAssertTrue(app.staticTexts["Listing selection required"].waitForExistence(timeout: 5))
+    app.buttons.containing(
+      .staticText,
+      identifier: "iShares STOXX Europe 600 Oil & Gas UCITS ETF (DE)"
+    ).firstMatch.tap()
+    XCTAssertTrue(app.staticTexts["EXH1.XETRA · EUR"].waitForExistence(timeout: 5))
+    XCTAssertFalse(app.staticTexts["Unavailable"].exists)
+  }
+
+  func testMarketDataQuotaDelayShowsNextRetry() {
+    let app = launch(["--market-quota"])
+    app.tabBars.buttons["Settings"].tap()
+    app.buttons["Market data"].tap()
+    XCTAssertTrue(
+      app.staticTexts.matching(
+        NSPredicate(format: "label CONTAINS %@", "Verification delayed until EODHD quota resets")
+      ).firstMatch.waitForExistence(timeout: 5))
+    XCTAssertTrue(
+      app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "Next retry"))
+        .firstMatch.exists)
+    XCTAssertFalse(app.staticTexts["Unavailable"].exists)
+  }
+
   func testChartScrubbingAndRangeChangesKeepLayout() {
     let app = launch()
     let picker = app.buttons["1M"]

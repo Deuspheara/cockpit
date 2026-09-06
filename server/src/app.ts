@@ -13,6 +13,7 @@ import { AuthService } from "./modules/auth/service.js";
 import { AppError } from "./shared/errors.js";
 import { MarketDataService } from "./modules/market-data/service.js";
 import { registerMarketDataRoutes } from "./modules/market-data/routes.js";
+import { EODHDQuotaCoordinator } from "./modules/market-data/providers.js";
 
 export function aiConfigurationStatus(
   config: Pick<
@@ -38,7 +39,14 @@ export async function createApp(
     dependencies?.database ?? connectDatabase(config.DATABASE_URL);
   const cache = dependencies?.cache ?? connectCache(config.REDIS_URL);
   const auth = new AuthService(database);
-  const marketData = new MarketDataService(database, cache, config);
+  const eodhdGate = new EODHDQuotaCoordinator(database, cache, config);
+  const marketData = new MarketDataService(
+    database,
+    cache,
+    config,
+    undefined,
+    eodhdGate,
+  );
   const app = Fastify({
     bodyLimit: 1024 * 1024,
     logger: {
@@ -164,7 +172,14 @@ export async function createApp(
   });
   await registerFinanceRoutes(app, database, cache, config);
   registerMarketDataRoutes(app, marketData);
-  const importJobs = await registerImportRoutes(app, database, cache, config);
+  const importJobs = await registerImportRoutes(
+    app,
+    database,
+    cache,
+    config,
+    undefined,
+    eodhdGate,
+  );
   const agentRuns = registerAgentRoutes(app, database, config);
   registerBotRoutes(app, database);
   app.addHook("preClose", () => agentRuns.close());

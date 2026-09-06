@@ -502,6 +502,7 @@ export const securities = pgTable("securities", {
   preferredMappingId: uuid("preferred_mapping_id"),
   selectionLocked: boolean("selection_locked").notNull().default(false),
   revision: integer("revision").notNull().default(1),
+  verificationRevision: integer("verification_revision").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -542,6 +543,7 @@ export const providerMappings = pgTable("provider_mappings", {
   evidence: jsonb("evidence").notNull().default({}),
   verifiedAt: timestamp("verified_at", { withTimezone: true }),
   revision: integer("revision").notNull().default(1),
+  verificationRevision: integer("verification_revision").notNull().default(1),
   createdAt: timestamp("created_at", { withTimezone: true })
     .notNull()
     .defaultNow(),
@@ -607,4 +609,23 @@ export const marketDataJobs = pgTable("market_data_jobs", {
     .notNull()
     .defaultNow(),
   finishedAt: timestamp("finished_at", { withTimezone: true }),
+});
+export const providerCallBudgets = pgTable("provider_call_budgets", {
+  provider: text("provider").notNull(),
+  budgetDay: date("budget_day").notNull(),
+  usedCalls: integer("used_calls").notNull().default(0),
+  blockedUntil: timestamp("blocked_until", { withTimezone: true }),
+  blockReason: text("block_reason"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+export const providerWorkLeases = pgTable("provider_work_leases", {
+  provider: text("provider").notNull(),
+  workType: text("work_type").notNull(),
+  owner: text("owner").notNull(),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }).notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
 });

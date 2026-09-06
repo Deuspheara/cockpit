@@ -12,6 +12,8 @@ struct MarketDataSecuritySummary: Decodable, Identifiable, Sendable {
   let priceStatus: String
   let historyStatus: String
   let message: String?
+  let resolutionReason: String?
+  let nextRetryAt: Date?
   let marketDate: String?
   let close: Amount?
   let currency: String?
@@ -61,6 +63,8 @@ struct MarketDataSecurityDetail: Decodable, Identifiable, Sendable {
   let preferredMappingId: UUID?
   let selectionLocked: Bool
   let revision: Int
+  let resolutionReason: String?
+  let nextRetryAt: Date?
   let states: [MarketDataStateDTO]
   let mappings: [MarketDataMappingDTO]
   let latestPrice: MarketDataPriceDTO?
@@ -88,7 +92,11 @@ struct MarketDataReviewView: View {
             Text(security.name).font(.headline)
             Text("\(security.isin) · \(marketStatusTitle(security))")
               .font(.caption).foregroundStyle(.secondary)
-            if let message = security.message {
+            if let message = marketResolutionMessage(
+              reason: security.resolutionReason,
+              fallback: security.message,
+              retryAt: security.nextRetryAt)
+            {
               Text(message).font(.caption).foregroundStyle(.orange)
             }
             if let date = security.marketDate, let close = security.close,
@@ -156,13 +164,21 @@ struct MarketDataSecurityView: View {
                 if let message = state.message {
                   Text(message).font(.caption).foregroundStyle(.secondary)
                 }
+                if let retryAt = state.nextRetryAt {
+                  Text("Next retry · \(retryAt.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption).foregroundStyle(.secondary)
+                }
               }
             }
           }
         }
         Section("Verified EODHD listings") {
           if detail.mappings.isEmpty {
-            Text("No selectable listing has been verified for this ISIN.")
+            Text(
+              marketResolutionMessage(
+                reason: detail.resolutionReason,
+                fallback: "Listing verification is pending.",
+                retryAt: detail.nextRetryAt)!)
               .foregroundStyle(.secondary)
           }
           ForEach(detail.mappings) { mapping in
@@ -186,10 +202,14 @@ struct MarketDataSecurityView: View {
           }
         }
         Section {
-          Button("Retry resolution and prices") { Task { await refresh() } }
-            .disabled(working)
+          if detail.preferredMappingId != nil {
+            Button("Refresh prices") { Task { await refresh() } }
+              .disabled(working)
+          }
+          Button("Re-resolve listings") { Task { await reResolve(revision: detail.revision) } }
+            .disabled(working || detail.selectionLocked)
           if detail.selectionLocked {
-            Button("Return to automatic selection", role: .destructive) {
+            Button("Return to automatic selection") {
               Task { await select(nil, revision: detail.revision) }
             }.disabled(working)
           }
@@ -248,6 +268,21 @@ struct MarketDataSecurityView: View {
       self.error = error.localizedDescription
     }
   }
+
+  private func reResolve(revision: Int) async {
+    guard let api = environment.api else { return }
+    working = true
+    defer { working = false }
+    do {
+      detail = try await api.send(
+        "market-data/securities/\(securityID)/re-resolve", method: "POST",
+        body: ["expectedRevision": .number(Decimal(revision))])
+      error = nil
+    } catch {
+      self.error = error.localizedDescription
+      await load()
+    }
+  }
 }
 
 private func statusTitle(_ status: String) -> String {
@@ -259,9 +294,27 @@ private func stageTitle(_ stage: String) -> String {
 }
 
 private func marketStatusTitle(_ security: MarketDataSecuritySummary) -> String {
+  if security.resolutionReason == "listing_selection_required" { return "Listing selection required" }
+  if security.resolutionReason == "verification_quota_delayed" {
+    return "Verification delayed"
+  }
+  if security.resolutionReason == "exact_isin_not_found" { return "No exact listing found" }
   if security.identityStatus != "identity_resolved" { return statusTitle(security.identityStatus) }
   if security.selectionStatus != "selected" { return statusTitle(security.selectionStatus) }
   return statusTitle(security.priceStatus)
+}
+
+func marketResolutionMessage(reason: String?, fallback: String?, retryAt: Date?) -> String? {
+  let message: String?
+  switch reason {
+  case "listing_selection_required": message = "Listing selection required"
+  case "verification_quota_delayed": message = "Verification delayed until EODHD quota resets"
+  case "exact_isin_not_found": message = "No exact-ISIN EODHD listing found"
+  default: message = fallback
+  }
+  guard let message else { return nil }
+  guard reason == "verification_quota_delayed", let retryAt else { return message }
+  return "\(message) · Next retry \(retryAt.formatted(date: .abbreviated, time: .shortened))"
 }
 
 private func marketDateTitle(_ value: String) -> String {

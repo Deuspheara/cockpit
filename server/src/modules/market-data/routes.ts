@@ -35,4 +35,14 @@ export function registerMarketDataRoutes(
   app.post("/api/v1/market-data/securities/:id/refresh", (request) =>
     marketData.refresh(securityId(request.params)),
   );
+  app.post("/api/v1/market-data/securities/:id/re-resolve", (request) => {
+    const body = z
+      .object({ expectedRevision: z.number().int().positive() })
+      .strict()
+      .parse(request.body);
+    return marketData.reResolve(
+      securityId(request.params),
+      body.expectedRevision,
+    );
+  });
 }

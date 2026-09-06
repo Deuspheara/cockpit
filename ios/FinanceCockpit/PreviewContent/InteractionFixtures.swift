@@ -70,6 +70,8 @@
     var applied = false
     var historyRetried = false
     let importID = UUID()
+    let marketSecurityID = UUID()
+    let marketMappingID = UUID()
     let candidateID = UUID()
     let jobID = UUID()
     var importRevision = 0
@@ -102,6 +104,47 @@
       return data.isEmpty ? [:] : try JSONDecoder().decode([String: JSONValue].self, from: data)
     }
     private struct AccountSyncResultFixture: Encodable { let status: String }
+    private func marketDataFixture(detail: Bool) -> Data {
+      let quota = ProcessInfo.processInfo.arguments.contains("--market-quota")
+      let reason = quota ? "verification_quota_delayed" : "listing_selection_required"
+      let message =
+        quota
+        ? "Verification delayed until EODHD quota resets" : "Listing selection required"
+      let retry = quota ? #""2026-09-07T00:00:05Z""# : "null"
+      let mappings = quota
+        ? "[]"
+        : """
+          [{"id":"\(marketMappingID.uuidString)","provider":"eodhd",
+            "providerSymbol":"EXH1.XETRA","providerExchange":"XETRA",
+            "verificationStatus":"verified","ticker":"EXH1","mic":null,
+            "name":"iShares STOXX Europe 600 Oil & Gas UCITS ETF (DE)",
+            "quoteCurrency":"EUR","quoteUnit":"major","unitMultiplier":"1",
+            "timezone":null,"active":true,"selected":false,"selectable":true}]
+          """
+      if detail {
+        return Data(
+          """
+          {"id":"\(marketSecurityID.uuidString)","isin":"DE000A0H08M3",
+           "name":"iShares STOXX Europe 600 Oil & Gas UCITS ETF (DE)","assetType":"etf",
+           "identityStatus":"\(quota ? "identity_pending" : "identity_resolved")",
+           "preferredMappingId":null,"selectionLocked":false,"revision":2,
+           "resolutionReason":"\(reason)","nextRetryAt":\(retry),
+           "states":[{"stage":"selection","status":"\(quota ? "verification_delayed" : "selection_required")",
+             "errorClass":\(quota ? #""quota_exhausted""# : "null"),"message":"\(message)",
+             "nextRetryAt":\(retry)}],"mappings":\(mappings),"latestPrice":null}
+          """.utf8)
+      }
+      return Data(
+        """
+        [{"id":"\(marketSecurityID.uuidString)","isin":"DE000A0H08M3",
+          "name":"iShares STOXX Europe 600 Oil & Gas UCITS ETF (DE)","assetType":"etf",
+          "identityStatus":"\(quota ? "identity_pending" : "identity_resolved")",
+          "selectionLocked":false,"revision":2,"selectionStatus":"\(quota ? "verification_delayed" : "selection_required")",
+          "priceStatus":"price_pending","historyStatus":"history_pending","message":"\(message)",
+          "resolutionReason":"\(reason)","nextRetryAt":\(retry),"marketDate":null,
+          "close":null,"currency":null,"assetCount":1}]
+        """.utf8)
+    }
     func response(_ request: URLRequest) throws -> Data {
       let url = request.url!
       let path = url.path.replacingOccurrences(of: "/api/v1/", with: "")
@@ -113,6 +156,10 @@
         PortfolioRange(rawValue: query.first { $0.name == "range" }?.value ?? "1m") ?? .month
       let scope =
         PortfolioScope(rawValue: query.first { $0.name == "scope" }?.value ?? "global") ?? .global
+      if path == "market-data/securities" { return marketDataFixture(detail: false) }
+      if path == "market-data/securities/\(marketSecurityID.uuidString)" {
+        return marketDataFixture(detail: true)
+      }
       if path.hasPrefix("accounts/"), path.hasSuffix("/imports") {
         return try encode([
           CSVImportHistoryItem(

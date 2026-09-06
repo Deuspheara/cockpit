@@ -92,7 +92,8 @@ struct AccountDetailView: View {
                   logoUrl: position.logoUrl, quantity: position.quantity,
                   value: position.marketValue,
                   currency: position.currency, side: position.side,
-                  exposure: position.assetType == "perp")
+                  exposure: position.assetType == "perp",
+                  unavailableReason: position.unpricedReason)
                 if environment.advancedMode, position.assetType == "perp" {
                   if detail.account.sourceType == "dydx" {
                     NavigationLink(
@@ -145,9 +146,6 @@ struct AccountDetailView: View {
                 if let marketDate = position.priceMarketDate {
                   Text("\(position.priceSource?.uppercased() ?? "EOD") close · \(marketDate)")
                     .font(.caption).foregroundStyle(.secondary)
-                }
-                if position.marketValue == nil, let reason = position.unpricedReason {
-                  Text(reason).font(.caption).foregroundStyle(.orange)
                 }
                 if let securityID = position.securityId,
                   position.marketValue == nil || position.selectionStatus != "selected"

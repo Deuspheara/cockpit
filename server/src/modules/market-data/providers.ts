@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Config } from "../../config.js";
+import type { Database } from "../../db/index.js";
 import type { Cache } from "../../shared/cache.js";
 import { Decimal, money } from "../../shared/decimal.js";
 
@@ -20,6 +21,145 @@ export class MarketProviderError extends Error {
     public retryAt?: Date,
   ) {
     super(message);
+  }
+}
+
+export interface EODHDRequestGate {
+  run<T>(request: () => Promise<T>): Promise<T>;
+  blockedUntil(): Promise<Date | null>;
+  claimDiscoveryLease?(owner: string): Promise<boolean>;
+  releaseDiscoveryLease?(owner: string): Promise<void>;
+}
+
+export class EODHDQuotaCoordinator implements EODHDRequestGate {
+  constructor(
+    private database: Database,
+    private cache: Cache,
+    private config: Pick<
+      Config,
+      "EODHD_API_TOKEN" | "EODHD_DAILY_LIMIT" | "EODHD_PER_MINUTE_LIMIT"
+    >,
+  ) {}
+
+  private resetAfter(now = new Date()) {
+    const reset = new Date(now);
+    reset.setUTCDate(reset.getUTCDate() + 1);
+    reset.setUTCHours(0, 0, 5, 0);
+    return reset;
+  }
+
+  private async reserve() {
+    if (!this.config.EODHD_API_TOKEN)
+      throw new MarketProviderError(
+        "configuration_error",
+        "EODHD_API_TOKEN is not configured.",
+      );
+    const now = new Date();
+    const existingBlock = await this.blockedUntil();
+    if (existingBlock)
+      throw new MarketProviderError(
+        "quota_exhausted",
+        "The configured EODHD daily call budget was reached.",
+        undefined,
+        existingBlock,
+      );
+    const minute = now.toISOString().slice(0, 16);
+    try {
+      const used = await this.cache.incr(`market-data:eodhd:minute:${minute}`);
+      await this.cache.expire(`market-data:eodhd:minute:${minute}`, 120);
+      if (used > this.config.EODHD_PER_MINUTE_LIMIT)
+        throw new MarketProviderError(
+          "rate_limited",
+          "The configured EODHD per-minute limit was reached.",
+          undefined,
+          new Date(Date.now() + 60000),
+        );
+    } catch (error) {
+      if (error instanceof MarketProviderError) throw error;
+      throw new MarketProviderError(
+        "provider_unavailable",
+        "Market-data throttling is unavailable because Redis cannot be reached.",
+      );
+    }
+    const day = now.toISOString().slice(0, 10);
+    const rows = await this.database.sql<{ usedCalls: number }[]>`
+      INSERT INTO provider_call_budgets(provider,budget_day,used_calls)
+      VALUES('eodhd',${day}::date,1)
+      ON CONFLICT(provider,budget_day) DO UPDATE SET
+        used_calls=provider_call_budgets.used_calls+1,updated_at=now()
+      WHERE (provider_call_budgets.blocked_until IS NULL OR provider_call_budgets.blocked_until<=now())
+        AND provider_call_budgets.used_calls<${this.config.EODHD_DAILY_LIMIT}
+      RETURNING used_calls`;
+    if (rows.length) return;
+    const retryAt = this.resetAfter(now);
+    await this.database.sql`
+      INSERT INTO provider_call_budgets(provider,budget_day,used_calls,blocked_until,block_reason)
+      VALUES('eodhd',${day}::date,${this.config.EODHD_DAILY_LIMIT},${retryAt},'configured_limit')
+      ON CONFLICT(provider,budget_day) DO UPDATE SET
+        blocked_until=greatest(coalesce(provider_call_budgets.blocked_until,excluded.blocked_until),excluded.blocked_until),
+        block_reason='configured_limit',updated_at=now()`;
+    throw new MarketProviderError(
+      "quota_exhausted",
+      "The configured EODHD daily call budget was reached.",
+      undefined,
+      retryAt,
+    );
+  }
+
+  private async observe(error: unknown) {
+    if (
+      !(error instanceof MarketProviderError) ||
+      error.failure !== "quota_exhausted"
+    )
+      return;
+    const now = new Date();
+    const day = now.toISOString().slice(0, 10);
+    const resetAt = this.resetAfter(now);
+    const retryAt =
+      error.retryAt && error.retryAt > resetAt ? error.retryAt : resetAt;
+    error.retryAt = retryAt;
+    await this.database.sql`
+      INSERT INTO provider_call_budgets(provider,budget_day,used_calls,blocked_until,block_reason)
+      VALUES('eodhd',${day}::date,${this.config.EODHD_DAILY_LIMIT},${retryAt},'upstream_quota')
+      ON CONFLICT(provider,budget_day) DO UPDATE SET
+        used_calls=greatest(provider_call_budgets.used_calls,excluded.used_calls),
+        blocked_until=greatest(coalesce(provider_call_budgets.blocked_until,excluded.blocked_until),excluded.blocked_until),
+        block_reason='upstream_quota',updated_at=now()`;
+  }
+
+  async blockedUntil() {
+    const day = new Date().toISOString().slice(0, 10);
+    const [row] = await this.database.sql<{ blockedUntil: Date | null }[]>`
+      SELECT blocked_until FROM provider_call_budgets
+      WHERE provider='eodhd' AND budget_day=${day}::date AND blocked_until>now()`;
+    return row?.blockedUntil ?? null;
+  }
+
+  async claimDiscoveryLease(owner: string) {
+    const rows = await this.database.sql`
+      INSERT INTO provider_work_leases(provider,work_type,owner,lease_until)
+      VALUES('eodhd','discovery',${owner},now()+interval '2 minutes')
+      ON CONFLICT(provider,work_type) DO UPDATE SET
+        owner=excluded.owner,lease_until=excluded.lease_until,updated_at=now()
+      WHERE provider_work_leases.lease_until<now() OR provider_work_leases.owner=${owner}
+      RETURNING owner`;
+    return rows.length > 0;
+  }
+
+  async releaseDiscoveryLease(owner: string) {
+    await this.database.sql`
+      DELETE FROM provider_work_leases
+      WHERE provider='eodhd' AND work_type='discovery' AND owner=${owner}`;
+  }
+
+  async run<T>(request: () => Promise<T>) {
+    await this.reserve();
+    try {
+      return await request();
+    } catch (error) {
+      await this.observe(error);
+      throw error;
+    }
   }
 }
 
@@ -46,11 +186,11 @@ export interface EodBar {
 
 const listingRow = z
   .object({
-    Code: z.string(),
-    Exchange: z.string(),
-    Name: z.string(),
-    Type: z.string(),
-    Currency: z.string(),
+    Code: z.string().trim().min(1),
+    Exchange: z.string().trim().min(1),
+    Name: z.string().trim().min(1),
+    Type: z.string().trim().min(1),
+    Currency: z.string().trim().min(1),
     ISIN: z.string().nullish(),
     isPrimary: z.boolean().optional(),
   })
@@ -106,7 +246,10 @@ async function providerFailure(provider: string, response: Response) {
       code,
     );
   if (response.status === 429) {
-    const quota = body.includes("daily") || body.includes("quota");
+    const quota =
+      body.includes("daily") ||
+      body.includes("quota") ||
+      body.includes("limit for the day");
     let retryAt = retryDate(response);
     if (quota && !retryAt) {
       retryAt = new Date();
@@ -139,7 +282,7 @@ async function providerFailure(provider: string, response: Response) {
 
 export class EODHDClient {
   constructor(
-    private cache: Cache,
+    private gate: EODHDRequestGate,
     private config: Pick<
       Config,
       "EODHD_API_TOKEN" | "EODHD_DAILY_LIMIT" | "EODHD_PER_MINUTE_LIMIT"
@@ -147,75 +290,31 @@ export class EODHDClient {
     private transport: typeof fetch = fetch,
   ) {}
 
-  private async consume() {
-    if (!this.config.EODHD_API_TOKEN)
-      throw new MarketProviderError(
-        "configuration_error",
-        "EODHD_API_TOKEN is not configured.",
-      );
-    const now = new Date();
-    const day = now.toISOString().slice(0, 10);
-    const minute = now.toISOString().slice(0, 16);
-    try {
-      const [daily, perMinute] = await Promise.all([
-        this.cache.incr(`market-data:eodhd:daily:${day}`),
-        this.cache.incr(`market-data:eodhd:minute:${minute}`),
-      ]);
-      await Promise.all([
-        this.cache.expire(`market-data:eodhd:daily:${day}`, 172800),
-        this.cache.expire(`market-data:eodhd:minute:${minute}`, 120),
-      ]);
-      if (daily > this.config.EODHD_DAILY_LIMIT) {
-        const retry = new Date(now);
-        retry.setUTCDate(retry.getUTCDate() + 1);
-        retry.setUTCHours(0, 0, 5, 0);
+  private async json(url: URL) {
+    return this.gate.run(async () => {
+      let response: Response;
+      try {
+        response = await this.transport(url, {
+          headers: { Accept: "application/json" },
+          signal: AbortSignal.timeout(15000),
+          redirect: "error",
+        });
+      } catch {
         throw new MarketProviderError(
-          "quota_exhausted",
-          "The configured EODHD daily call budget was reached.",
-          undefined,
-          retry,
+          "provider_unavailable",
+          "EODHD could not be reached.",
         );
       }
-      if (perMinute > this.config.EODHD_PER_MINUTE_LIMIT)
+      if (!response.ok) throw await providerFailure("EODHD", response);
+      try {
+        return await response.json();
+      } catch {
         throw new MarketProviderError(
-          "rate_limited",
-          "The configured EODHD per-minute limit was reached.",
-          undefined,
-          new Date(Date.now() + 60000),
+          "invalid_provider_data",
+          "EODHD returned unreadable JSON.",
         );
-    } catch (error) {
-      if (error instanceof MarketProviderError) throw error;
-      throw new MarketProviderError(
-        "provider_unavailable",
-        "Market-data throttling is unavailable because Redis cannot be reached.",
-      );
-    }
-  }
-
-  private async json(url: URL) {
-    await this.consume();
-    let response: Response;
-    try {
-      response = await this.transport(url, {
-        headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(15000),
-        redirect: "error",
-      });
-    } catch {
-      throw new MarketProviderError(
-        "provider_unavailable",
-        "EODHD could not be reached.",
-      );
-    }
-    if (!response.ok) throw await providerFailure("EODHD", response);
-    try {
-      return await response.json();
-    } catch {
-      throw new MarketProviderError(
-        "invalid_provider_data",
-        "EODHD returned unreadable JSON.",
-      );
-    }
+      }
+    });
   }
 
   async searchExact(
@@ -228,7 +327,7 @@ export class EODHDClient {
     );
     url.searchParams.set("api_token", this.config.EODHD_API_TOKEN);
     url.searchParams.set("fmt", "json");
-    url.searchParams.set("limit", "100");
+    url.searchParams.set("limit", "500");
     const payload = await this.json(url);
     if (!Array.isArray(payload))
       throw new MarketProviderError(
@@ -264,30 +363,24 @@ export class EODHDClient {
   async mapIsin(isin: string): Promise<string[]> {
     const normalized = isin.trim().toUpperCase();
     const symbols = new Set<string>();
-    let offset = 0;
-    do {
-      const url = new URL("https://eodhd.com/api/id-mapping");
-      url.searchParams.set("api_token", this.config.EODHD_API_TOKEN);
-      url.searchParams.set("fmt", "json");
-      url.searchParams.set("filter[isin]", normalized);
-      url.searchParams.set("page[limit]", "1000");
-      url.searchParams.set("page[offset]", String(offset));
-      const parsed = idMappingPayload.safeParse(await this.json(url));
-      if (!parsed.success)
-        throw new MarketProviderError(
-          "invalid_provider_data",
-          "EODHD identifier mapping returned an unexpected payload.",
-        );
-      for (const row of parsed.data.data)
-        if (
-          row.isin?.trim().toUpperCase() === normalized &&
-          /^[^\s.]+\.[^\s.]+$/.test(row.symbol.trim())
-        )
-          symbols.add(row.symbol.trim());
-      const next = parsed.data.meta.offset + parsed.data.meta.limit;
-      if (next <= offset || next >= parsed.data.meta.total) break;
-      offset = next;
-    } while (offset < 10000);
+    const url = new URL("https://eodhd.com/api/id-mapping");
+    url.searchParams.set("api_token", this.config.EODHD_API_TOKEN);
+    url.searchParams.set("fmt", "json");
+    url.searchParams.set("filter[isin]", normalized);
+    url.searchParams.set("page[limit]", "1000");
+    url.searchParams.set("page[offset]", "0");
+    const parsed = idMappingPayload.safeParse(await this.json(url));
+    if (!parsed.success)
+      throw new MarketProviderError(
+        "invalid_provider_data",
+        "EODHD identifier mapping returned an unexpected payload.",
+      );
+    for (const row of parsed.data.data)
+      if (
+        row.isin?.trim().toUpperCase() === normalized &&
+        /^[^\s.]+\.[^\s.]+$/.test(row.symbol.trim())
+      )
+        symbols.add(row.symbol.trim());
     return [...symbols];
   }
 

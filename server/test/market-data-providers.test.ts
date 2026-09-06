@@ -4,6 +4,7 @@ import {
   EODHDClient,
   MarketProviderError,
   OpenFigiClient,
+  type EODHDRequestGate,
 } from "../src/modules/market-data/providers.js";
 
 function cache() {
@@ -26,12 +27,21 @@ const response = (value: unknown, status = 200, headers?: HeadersInit) =>
     headers: { "content-type": "application/json", ...headers },
   });
 
+const gate = (): EODHDRequestGate => ({
+  async run(request) {
+    return request();
+  },
+  async blockedUntil() {
+    return null;
+  },
+});
+
 describe("shared market-data providers", () => {
   it("keeps only exact-ISIN EODHD listings and ignores malformed rows", async () => {
     const transport: typeof fetch = async (input) => {
       const url = new URL(String(input));
       expect(url.pathname).toBe("/api/search/US0378331005");
-      expect(url.searchParams.get("limit")).toBe("100");
+      expect(url.searchParams.get("limit")).toBe("500");
       return response([
         {
           Code: "AAPL",
@@ -54,7 +64,7 @@ describe("shared market-data providers", () => {
       ]);
     };
     const client = new EODHDClient(
-      cache(),
+      gate(),
       {
         EODHD_API_TOKEN: "test",
         EODHD_DAILY_LIMIT: 20,
@@ -71,9 +81,45 @@ describe("shared market-data providers", () => {
     ]);
   });
 
+  it("keeps every complete EXH1 listing returned by an exact-ISIN search", async () => {
+    const exchanges = ["XETRA", "F", "MU", "HM"];
+    let requests = 0;
+    const client = new EODHDClient(
+      gate(),
+      {
+        EODHD_API_TOKEN: "test",
+        EODHD_DAILY_LIMIT: 20,
+        EODHD_PER_MINUTE_LIMIT: 20,
+      },
+      async () => {
+        requests++;
+        return response(
+          exchanges.map((Exchange) => ({
+            Code: "EXH1",
+            Exchange,
+            Name: "iShares STOXX Europe 600 Oil & Gas UCITS ETF (DE)",
+            Type: "ETF",
+            Currency: "EUR",
+            ISIN: "DE000A0H08M3",
+            isPrimary: Exchange === "XETRA",
+          })),
+        );
+      },
+    );
+
+    const listings = await client.searchIsin("DE000A0H08M3");
+    expect(requests).toBe(1);
+    expect(listings.map((listing) => listing.providerSymbol)).toEqual([
+      "EXH1.XETRA",
+      "EXH1.F",
+      "EXH1.MU",
+      "EXH1.HM",
+    ]);
+  });
+
   it("preserves date-only raw and adjusted EOD values while rejecting invalid bars", async () => {
     const client = new EODHDClient(
-      cache(),
+      gate(),
       {
         EODHD_API_TOKEN: "test",
         EODHD_DAILY_LIMIT: 20,
@@ -110,10 +156,10 @@ describe("shared market-data providers", () => {
     ]);
   });
 
-  it("paginates EODHD identifier mapping and accepts only the requested ISIN", async () => {
+  it("uses one EODHD identifier-mapping request and accepts only the requested ISIN", async () => {
     const offsets: string[] = [];
     const client = new EODHDClient(
-      cache(),
+      gate(),
       {
         EODHD_API_TOKEN: "test",
         EODHD_DAILY_LIMIT: 20,
@@ -124,30 +170,22 @@ describe("shared market-data providers", () => {
         const offset = url.searchParams.get("page[offset]")!;
         offsets.push(offset);
         expect(url.searchParams.get("filter[isin]")).toBe("US0378331005");
-        return offset === "0"
-          ? response({
-              meta: { total: 1001, limit: 1000, offset: 0 },
-              data: [
-                { symbol: "AAPL.US", isin: "US0378331005" },
-                { symbol: "WRONG.US", isin: "US5949181045" },
-              ],
-            })
-          : response({
-              meta: { total: 1001, limit: 1000, offset: 1000 },
-              data: [{ symbol: "APC.XETRA", isin: "US0378331005" }],
-            });
+        return response({
+          meta: { total: 2, limit: 1000, offset: 0 },
+          data: [
+            { symbol: "AAPL.US", isin: "US0378331005" },
+            { symbol: "WRONG.US", isin: "US5949181045" },
+          ],
+        });
       },
     );
-    await expect(client.mapIsin("us0378331005")).resolves.toEqual([
-      "AAPL.US",
-      "APC.XETRA",
-    ]);
-    expect(offsets).toEqual(["0", "1000"]);
+    await expect(client.mapIsin("us0378331005")).resolves.toEqual(["AAPL.US"]);
+    expect(offsets).toEqual(["0"]);
   });
 
   it("classifies provider quota responses and honors Retry-After", async () => {
     const client = new EODHDClient(
-      cache(),
+      gate(),
       {
         EODHD_API_TOKEN: "test",
         EODHD_DAILY_LIMIT: 20,

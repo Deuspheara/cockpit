@@ -10,6 +10,7 @@ import { RecurringService } from "./modules/recurring/service.js";
 import { PortfolioService } from "./modules/portfolio/service.js";
 import { SnapshotService } from "./modules/snapshots/service.js";
 import { MarketDataService } from "./modules/market-data/service.js";
+import { EODHDQuotaCoordinator } from "./modules/market-data/providers.js";
 const config = readConfig();
 const database = connectDatabase(config.DATABASE_URL),
   cache = connectCache(config.REDIS_URL);
@@ -18,7 +19,13 @@ const recurring = new RecurringService(database),
 const sync = new SyncService(database, cache, config),
   fx = new FXService(database),
   bots = new BotService(database),
-  marketData = new MarketDataService(database, cache, config);
+  marketData = new MarketDataService(
+    database,
+    cache,
+    config,
+    undefined,
+    new EODHDQuotaCoordinator(database, cache, config),
+  );
 const evmHistory = new EVMHistoryService(
   database,
   config.ALCHEMY_API_KEY,

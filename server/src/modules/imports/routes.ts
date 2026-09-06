@@ -12,6 +12,10 @@ import { ImportService } from "./service.js";
 import { validateImage, readImageBytes } from "./images.js";
 import { AppError } from "../../shared/errors.js";
 import { EODHDMarketData } from "./market-data.js";
+import {
+  EODHDQuotaCoordinator,
+  type EODHDRequestGate,
+} from "../market-data/providers.js";
 import { currency, decimalString } from "../../shared/decimal.js";
 export async function registerImportRoutes(
   app: FastifyInstance,
@@ -19,6 +23,11 @@ export async function registerImportRoutes(
   cache: Cache,
   config: Config,
   model = new OpenRouterClient(config),
+  eodhdGate: EODHDRequestGate = new EODHDQuotaCoordinator(
+    database,
+    cache,
+    config,
+  ),
 ) {
   await app.register(multipart, {
     limits: {
@@ -33,7 +42,7 @@ export async function registerImportRoutes(
     database,
     model,
     new ChangeSetService(database),
-    new EODHDMarketData(cache, config),
+    new EODHDMarketData(cache, config, eodhdGate),
   );
   const id = (params: unknown) =>
     z.object({ id: z.uuid().toLowerCase() }).parse(params).id;

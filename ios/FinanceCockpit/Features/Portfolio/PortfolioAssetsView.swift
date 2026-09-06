@@ -15,6 +15,7 @@ struct PortfolioAssetLine: Decodable, Identifiable, Sendable {
   var logoUrl: String? = nil
   var assetType: String? = nil
   var side: String? = nil
+  var unpricedReason: String? = nil
 }
 struct PortfolioAssetsView: View {
   let scope: PortfolioScope
@@ -72,7 +73,8 @@ struct PortfolioAssetRow: View {
       HoldingSummaryRow(
         name: line.name, symbol: line.symbol, logoUrl: line.logoUrl,
         quantity: line.quantity, value: line.marketValue, currency: line.currency,
-        side: line.side, exposure: line.assetType == "perp", loader: logoLoader)
+        side: line.side, exposure: line.assetType == "perp", loader: logoLoader,
+        unavailableReason: line.unpricedReason)
       if environment.advancedMode {
         Text("\(line.accountName) · \(line.source)").font(.caption).foregroundStyle(.secondary)
       } else if line.stale {
@@ -99,6 +101,7 @@ struct HoldingSummaryRow: View {
   var side: String? = nil
   var exposure = false
   var loader: AssetLogoLoader = .shared
+  var unavailableReason: String? = nil
   @Environment(\.dynamicTypeSize) private var typeSize
   var body: some View {
     HStack(alignment: .top, spacing: 12) {
@@ -121,7 +124,7 @@ struct HoldingSummaryRow: View {
   }
   private var amount: some View {
     VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 4) {
-      Text(value.map { FinanceFormat.amount($0, currency: currency) } ?? "Unavailable")
+      Text(value.map { FinanceFormat.amount($0, currency: currency) } ?? unavailableReason ?? "Unavailable")
         .monospacedDigit().fixedSize(horizontal: false, vertical: true)
       if exposure { Text("Exposure").font(.caption).foregroundStyle(.secondary) }
     }

@@ -3,6 +3,10 @@ import { z } from "zod";
 import type { Config } from "../../config.js";
 import type { Cache } from "../../shared/cache.js";
 import { Decimal } from "../../shared/decimal.js";
+import {
+  MarketProviderError,
+  type EODHDRequestGate,
+} from "../market-data/providers.js";
 
 const resultSchema = z.array(
   z
@@ -69,6 +73,7 @@ export class EODHDMarketData implements MarketDataProvider {
   constructor(
     private cache: Cache,
     private config: Pick<Config, "EODHD_API_TOKEN" | "EODHD_DAILY_LIMIT">,
+    private gate: EODHDRequestGate,
     private transport: typeof fetch = fetch,
   ) {}
 
@@ -102,20 +107,6 @@ export class EODHDMarketData implements MarketDataProvider {
       return fallback(
         "Investment search is not configured on the server (EODHD_API_TOKEN). Previously saved matches remain available.",
       );
-    const day = new Date().toISOString().slice(0, 10);
-    const budgetKey = `market-data:eodhd:budget:${day}`;
-    try {
-      const used = await this.cache.incr(budgetKey);
-      if (used === 1) await this.cache.expire(budgetKey, 172800);
-      if (used > this.config.EODHD_DAILY_LIMIT)
-        return fallback(
-          "The daily investment-search limit has been reached. Previously saved matches remain available.",
-        );
-    } catch {
-      return fallback(
-        "Investment search is temporarily unavailable. Previously saved matches remain available.",
-      );
-    }
     const url = new URL(
       `https://eodhd.com/api/search/${encodeURIComponent(normalized)}`,
     );
@@ -124,21 +115,29 @@ export class EODHDMarketData implements MarketDataProvider {
     url.searchParams.set("limit", "20");
     let candidates: MarketCandidate[];
     try {
-      const response = await this.transport(url, {
-        signal: signal
-          ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
-          : AbortSignal.timeout(10000),
-        headers: { Accept: "application/json" },
+      const payload = await this.gate.run(async () => {
+        const response = await this.transport(url, {
+          signal: signal
+            ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
+            : AbortSignal.timeout(10000),
+          headers: { Accept: "application/json" },
+        });
+        if (!response.ok)
+          throw new MarketProviderError(
+            response.status === 429
+              ? "quota_exhausted"
+              : response.status === 401
+                ? "authentication_error"
+                : response.status === 403
+                  ? "not_entitled"
+                  : response.status >= 500
+                    ? "provider_unavailable"
+                    : "invalid_provider_data",
+            "EODHD investment search failed.",
+            String(response.status),
+          );
+        return response.json();
       });
-      if (!response.ok)
-        return fallback(
-          response.status === 429
-            ? "EODHD search quota reached. Previously saved matches remain available."
-            : response.status === 401 || response.status === 403
-              ? "EODHD rejected investment search. Check the server token and its Search API access."
-              : "EODHD investment search is temporarily unavailable. Previously saved matches remain available.",
-        );
-      const payload = await response.json();
       if (!Array.isArray(payload))
         return fallback("EODHD returned an unreadable search response.");
       const rows = payload.flatMap((row) => {
@@ -166,7 +165,15 @@ export class EODHDMarketData implements MarketDataProvider {
           : null,
         isPrimary: row.isPrimary ?? false,
       }));
-    } catch {
+    } catch (error) {
+      if (error instanceof MarketProviderError)
+        return fallback(
+          error.failure === "quota_exhausted"
+            ? "EODHD search quota reached. Previously saved matches remain available."
+            : ["authentication_error", "not_entitled"].includes(error.failure)
+              ? "EODHD rejected investment search. Check the server token and its Search API access."
+              : "EODHD investment search is temporarily unavailable. Previously saved matches remain available.",
+        );
       return fallback(
         "EODHD investment search could not be reached. Previously saved matches remain available.",
       );

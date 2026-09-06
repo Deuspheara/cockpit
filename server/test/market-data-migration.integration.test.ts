@@ -65,6 +65,26 @@ describe.skipIf(!url)("market-data migration from 0013", () => {
             status: "queued",
           },
         ]);
+        const [listing] = await tx<{ id: string }[]>`
+          INSERT INTO security_listings(security_id,ticker,name,quote_currency)
+          VALUES(${securities[0]!.id},'AIR','Airbus','EUR') RETURNING id`;
+        await tx`
+          INSERT INTO provider_mappings(
+            listing_id,provider,provider_symbol,verification_status,verified_at
+          ) VALUES(${listing!.id},'eodhd','AIR.PA','verified',now())`;
+        await tx.unsafe(
+          await readFile(
+            new URL("0015_eodhd_quota_resolution.sql", directory),
+            "utf8",
+          ),
+        );
+        expect(
+          await tx`
+            SELECT s.verification_revision AS security_revision,
+              m.verification_revision AS mapping_revision
+            FROM securities s JOIN security_listings l ON l.security_id=s.id
+            JOIN provider_mappings m ON m.listing_id=l.id`,
+        ).toEqual([{ securityRevision: 1, mappingRevision: 1 }]);
         await tx.unsafe(`DROP SCHEMA ${namespace} CASCADE`);
       });
     } finally {
