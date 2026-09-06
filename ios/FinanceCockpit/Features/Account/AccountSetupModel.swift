@@ -13,7 +13,7 @@ enum AccountProvider: String, CaseIterable, Identifiable {
     switch self {
     case .hyperliquid: "Hyperliquid"
     case .dydx: "dYdX"
-    case .evmWallet: "EVM wallet"
+    case .evmWallet: "Crypto wallet"
     }
   }
 }
@@ -129,7 +129,8 @@ final class AccountSetupModel {
         syncMessage =
           "Your account is connected, but some data is unavailable. "
           + (result.warnings ?? []).joined(separator: " ")
-      case "queued", "running": syncMessage = "Synchronization continues in the background. You can open your account now."
+      case "queued", "running":
+        syncMessage = "Synchronization continues in the background. You can open your account now."
       default: throw APIError(message: "The last sync did not complete. Try again shortly.")
       }
       synced = true

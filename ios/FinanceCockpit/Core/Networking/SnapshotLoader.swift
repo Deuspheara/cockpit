@@ -13,6 +13,14 @@ final class SnapshotLoader<Value: Sendable> {
   private var generation = 0
   private var request: Task<Value, Error>?
 
+  func invalidate() {
+    generation += 1
+    request?.cancel()
+    value = nil
+    displayedKey = nil
+    error = nil
+  }
+
   func load(
     key: String,
     cached: () async -> Value? = { nil },

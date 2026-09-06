@@ -12,8 +12,8 @@ export class ActivityService {
     const rows = await this.database.sql`
    SELECT * FROM (
     SELECT t.id,t.account_id,a.name AS account_name,a.asset_class::text,t.source,t.type::text AS kind,t.occurred_at AS at,
-      t.quantity::text,t.currency,s.symbol,t.is_voided,(a.source_type='manual') AS editable,t.id AS transaction_id
-      FROM transactions t JOIN accounts a ON a.id=t.account_id JOIN assets s ON s.id=t.asset_id
+      t.quantity::text,t.currency,s.symbol,t.is_voided,(a.source_type='manual' AND (t.external_id IS NULL OR t.provider='trade_republic') AND NOT t.is_voided) AS editable,t.id AS transaction_id
+      FROM transactions t JOIN accounts a ON a.id=t.account_id JOIN assets s ON s.id=t.asset_id WHERE NOT t.is_voided AND NOT a.is_archived
     UNION ALL
     SELECT o.id,r.account_id,a.name,a.asset_class::text,'recurring_rule','RECURRING_'||upper(o.status),o.due_at,
       r.quantity::text,r.currency,s.symbol,false,false,NULL::uuid

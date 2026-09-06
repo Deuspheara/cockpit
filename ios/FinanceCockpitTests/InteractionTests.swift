@@ -18,6 +18,19 @@ private final class Gate<T: Sendable> {
 
 @MainActor
 struct SnapshotTests {
+  @Test func invalidatedCacheRejectsLateResponses() async {
+    let cache = AppCache(namespace: "archive-test-" + UUID().uuidString)
+    let generation = await cache.generation
+    await cache.write("old account", key: "portfolio", generation: generation)
+    await cache.clear()
+    await cache.write("late old account", key: "portfolio", generation: generation)
+    let stale = await cache.read("portfolio", as: String.self)
+    #expect(stale == nil)
+    await cache.write("new portfolio", key: "portfolio", generation: await cache.generation)
+    let fresh = await cache.read("portfolio", as: String.self)
+    #expect(fresh == "new portfolio")
+    await cache.clear()
+  }
   @Test func latestRequestWinsAndRetainsVisibleData() async {
     let model = SnapshotLoader<String>()
     await model.load(key: "1m", fetch: { "month" })
@@ -199,6 +212,7 @@ struct AccountSetupTests {
       let idle = UIHostingController(
         rootView:
           PortfolioValueChart(dashboard: dashboard, range: .constant(.month))
+          .environment(AppEnvironment())
           .environment(\.dynamicTypeSize, size))
       let selected = UIHostingController(
         rootView:
@@ -206,6 +220,7 @@ struct AccountSetupTests {
             dashboard: dashboard, range: .constant(.month),
             initialSelection: dashboard.chart.first!.at
           )
+          .environment(AppEnvironment())
           .environment(\.dynamicTypeSize, size))
       let proposal = CGSize(width: 353, height: 1200)
       let idleSize = idle.sizeThatFits(in: proposal)
@@ -219,9 +234,12 @@ struct AccountSetupTests {
   @Test func queuedSyncAllowsNavigationWithoutClaimingCompletion() async throws {
     let model = AccountSetupModel()
     model.draft.address = "0x" + String(repeating: "a", count: 40)
-    let account = try APIClient.decoder().decode(Account.self, from: Data("""
-      {"id":"00000000-0000-0000-0000-000000000001","name":"Wallet","assetClass":"crypto","sourceType":"evm_wallet","baseCurrency":"EUR","isArchived":false,"metadata":{}}
-      """.utf8))
+    let account = try APIClient.decoder().decode(
+      Account.self,
+      from: Data(
+        """
+        {"id":"00000000-0000-0000-0000-000000000001","name":"Wallet","assetClass":"crypto","sourceType":"evm_wallet","baseCurrency":"EUR","isArchived":false,"metadata":{}}
+        """.utf8))
     await model.create { _ in account }
     await model.sync { _ in AccountSyncResult(status: "queued") }
     #expect(model.account?.id == account.id)
@@ -230,43 +248,70 @@ struct AccountSetupTests {
     #expect(model.syncMessage.contains("background"))
   }
   @Test func providerFailuresPreserveTheirMessages() {
-    for (code, message) in [("AI_UNAVAILABLE", "OpenRouter unavailable"), ("EODHD_QUOTA", "EODHD quota exhausted"), ("ALCHEMY_UNAVAILABLE", "Alchemy unavailable"), ("SERVER_ERROR", "Server unavailable")] {
-      let data = Data("{\"error\":{\"code\":\"\(code)\",\"message\":\"\(message)\",\"retryable\":true}}".utf8)
+    for (code, message) in [
+      ("AI_UNAVAILABLE", "OpenRouter unavailable"), ("EODHD_QUOTA", "EODHD quota exhausted"),
+      ("ALCHEMY_UNAVAILABLE", "Alchemy unavailable"), ("SERVER_ERROR", "Server unavailable"),
+    ] {
+      let data = Data(
+        "{\"error\":{\"code\":\"\(code)\",\"message\":\"\(message)\",\"retryable\":true}}".utf8)
       let error = APIClient.failure(data, status: 503)
       #expect(error.code == code)
       #expect(error.message == message)
     }
-    #expect(!APIClient.failure(Data("<html>gateway</html>".utf8), status: 502).message.contains("AI"))
+    #expect(
+      !APIClient.failure(Data("<html>gateway</html>".utf8), status: 502).message.contains("AI"))
   }
   @Test func restoredJobDistinguishesProcessingAndReupload() throws {
-    let active = try APIClient.decoder().decode(ImportJobDTO.self, from: Data("{\"id\":\"00000000-0000-0000-0000-000000000001\",\"status\":\"running\",\"phase\":\"matching\",\"failure\":null}".utf8))
+    let active = try APIClient.decoder().decode(
+      ImportJobDTO.self,
+      from: Data(
+        "{\"id\":\"00000000-0000-0000-0000-000000000001\",\"status\":\"running\",\"phase\":\"matching\",\"failure\":null}"
+          .utf8))
     #expect(active.isActive)
-    let failed = try APIClient.decoder().decode(ImportJobDTO.self, from: Data("{\"id\":\"00000000-0000-0000-0000-000000000001\",\"status\":\"failed\",\"phase\":\"extracting\",\"failure\":{\"code\":\"REUPLOAD_REQUIRED\",\"message\":\"Re-upload required\",\"retryable\":true}}".utf8))
+    let failed = try APIClient.decoder().decode(
+      ImportJobDTO.self,
+      from: Data(
+        "{\"id\":\"00000000-0000-0000-0000-000000000001\",\"status\":\"failed\",\"phase\":\"extracting\",\"failure\":{\"code\":\"REUPLOAD_REQUIRED\",\"message\":\"Re-upload required\",\"retryable\":true}}"
+          .utf8))
     #expect(!failed.isActive)
     #expect(failed.failure?.retryable == true)
-    #expect(ImportStage.allCases.map(\.title) == ["Upload & Analysis", "Account & Date", "Holdings", "Confirm", "Complete"])
+    #expect(
+      ImportStage.allCases.map(\.title) == [
+        "Upload & Analysis", "Account & Date", "Holdings", "Confirm", "Complete",
+      ])
   }
 }
 
-
 struct ImportCorrectionTests {
   @Test func unchangedEstimatedQuantityIsNotSubmittedAsUserInput() throws {
-    let position = try APIClient.decoder().decode(ImportSessionDTO.Extraction.Candidate.self, from: Data(#"{"candidateId":"abcdefab-1234-4123-8123-abcdefabcdef","symbol":"EUNL","name":"Core MSCI World USD (Acc)","quantity":"25","marketValue":"2500","currency":"EUR","confidence":1,"matchStatus":"matched","quantitySource":"estimated","sourceLines":1,"sourceCandidateIds":[]}"#.utf8))
-    let unchanged = position.correction(name: position.name!, symbol: "EUNL", quantity: "25", value: "2500", currency: "EUR")
+    let position = try APIClient.decoder().decode(
+      ImportSessionDTO.Extraction.Candidate.self,
+      from: Data(
+        #"{"candidateId":"abcdefab-1234-4123-8123-abcdefabcdef","symbol":"EUNL","name":"Core MSCI World USD (Acc)","quantity":"25","marketValue":"2500","currency":"EUR","confidence":1,"matchStatus":"matched","quantitySource":"estimated","sourceLines":1,"sourceCandidateIds":[]}"#
+          .utf8))
+    let unchanged = position.correction(
+      name: position.name!, symbol: "EUNL", quantity: "25", value: "2500", currency: "EUR")
     #expect(unchanged == ["candidateId": .string("abcdefab-1234-4123-8123-abcdefabcdef")])
-    let valueChanged = position.correction(name: position.name!, symbol: "EUNL", quantity: "25", value: "1250", currency: "EUR")
+    let valueChanged = position.correction(
+      name: position.name!, symbol: "EUNL", quantity: "25", value: "1250", currency: "EUR")
     #expect(valueChanged["quantity"] == nil)
     #expect(valueChanged["marketValue"] == .string("1250"))
-    let manual = position.correction(name: position.name!, symbol: "EUNL", quantity: "12,5", value: "1250", currency: "EUR")
+    let manual = position.correction(
+      name: position.name!, symbol: "EUNL", quantity: "12,5", value: "1250", currency: "EUR")
     #expect(manual["quantity"] == .string("12.5"))
   }
 }
 
 struct ImportReviewLoopTests {
   @Test func serverIssuesControlWhetherSavedHoldingIsComplete() throws {
-    let row = #"{"candidateId":"abcdefab-1234-4123-8123-abcdefabcdef","name":"Core MSCI World USD (Acc)","marketValue":"2500","currency":"EUR","confidence":1,"matchStatus":"ambiguous","quantitySource":"value_only","sourceLines":1,"sourceCandidateIds":[]}"#
+    let row =
+      #"{"candidateId":"abcdefab-1234-4123-8123-abcdefabcdef","name":"Core MSCI World USD (Acc)","marketValue":"2500","currency":"EUR","confidence":1,"matchStatus":"ambiguous","quantitySource":"value_only","sourceLines":1,"sourceCandidateIds":[]}"#
     func session(issues: String) throws -> ImportSessionDTO {
-      try APIClient.decoder().decode(ImportSessionDTO.self, from: Data("{\"id\":\"abcdefab-1234-4123-8123-abcdefabcdef\",\"status\":\"needs_input\",\"revision\":2,\"candidateIssues\":{\"abcdefab-1234-4123-8123-abcdefabcdef\":\(issues)},\"extraction\":{\"capturedAtInferred\":false,\"positions\":[\(row)],\"derivatives\":[]}}".utf8))
+      try APIClient.decoder().decode(
+        ImportSessionDTO.self,
+        from: Data(
+          "{\"id\":\"abcdefab-1234-4123-8123-abcdefabcdef\",\"status\":\"needs_input\",\"revision\":2,\"candidateIssues\":{\"abcdefab-1234-4123-8123-abcdefabcdef\":\(issues)},\"extraction\":{\"capturedAtInferred\":false,\"positions\":[\(row)],\"derivatives\":[]}}"
+            .utf8))
     }
     let unresolved = try session(issues: #"["Choose the exact investment."]"#)
     #expect(!unresolved.remainingIssues(for: unresolved.extraction!.positions[0]).isEmpty)

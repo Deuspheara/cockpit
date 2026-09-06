@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 
 actor AppCache {
+  private(set) var generation = 0
   private let folder: URL
   init(namespace: String) {
     let digest = SHA256.hash(data: Data(namespace.utf8)).map { String(format: "%02x", $0) }.joined()
@@ -16,7 +17,8 @@ actor AppCache {
     guard let data = try? Data(contentsOf: file(key)) else { return nil }
     return try? JSONDecoder().decode(T.self, from: data)
   }
-  func write<T: Codable & Sendable>(_ value: T, key: String) {
+  func write<T: Codable & Sendable>(_ value: T, key: String, generation expected: Int? = nil) {
+    guard expected == nil || expected == generation else { return }
     do {
       try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
       let data = try JSONEncoder().encode(value)
@@ -27,5 +29,8 @@ actor AppCache {
       try protected.setResourceValues(resources)
     } catch { /* Disposable cache failure must not hide a successful response. */  }
   }
-  func clear() { try? FileManager.default.removeItem(at: folder) }
+  func clear() {
+    generation += 1
+    try? FileManager.default.removeItem(at: folder)
+  }
 }

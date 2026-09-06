@@ -3,6 +3,9 @@ import SwiftUI
 struct AccountDetailView: View {
   let accountID: UUID
   @Environment(AppEnvironment.self) private var environment
+  @Environment(\.dismiss) private var dismiss
+  @State private var removing = false
+  @State private var confirmRemoval = false
   @State private var snapshot = SnapshotLoader<AccountDetail>()
   private var detail: AccountDetail? { snapshot.value }
   @State private var firstHoldingPresented = false
@@ -16,16 +19,19 @@ struct AccountDetailView: View {
     ScrollView {
       VStack(alignment: .leading, spacing: 24) {
         if let detail {
-          Text(accountSourceTitle(detail.account.sourceType)).font(.subheadline).foregroundStyle(
-            .secondary)
-          if detail.performance != nil {
+          if environment.advancedMode {
+            Text(accountSourceTitle(detail.account.sourceType)).font(.subheadline).foregroundStyle(
+              .secondary)
+          }
+          if environment.advancedMode, detail.performance != nil {
             Picker("Chart", selection: $chartMetric) {
               Text("Account equity").tag("Equity")
               Text("Trading PnL").tag("PnL")
             }.pickerStyle(.segmented)
           }
           Group {
-            if chartMetric == "PnL", let performance = detail.performance {
+            if environment.advancedMode, chartMetric == "PnL", let performance = detail.performance
+            {
               TradingPerformanceView(
                 performance: performance, range: $range, displayedRange: detail.dashboard.range)
             } else {
@@ -33,17 +39,21 @@ struct AccountDetailView: View {
                 dashboard: detail.dashboard, range: $range, compactEmptyHistory: true)
             }
           }.modifier(DatasetTransition(key: chartMetric))
-          if detail.account.sourceType != "manual" {
+          if environment.advancedMode, detail.account.sourceType != "manual" {
             AccountSyncStatusView(accountID: accountID)
           }
-          if detail.account.sourceType == "evm_wallet" {
+          if environment.advancedMode, detail.account.sourceType == "evm_wallet" {
             EVMHistoryStatusView(accountID: accountID, job: detail.historyJob)
           }
-          if let summary = detail.derivatives { DerivativesSummaryView(summary: summary) }
-          if let historyError = detail.historyError {
+          if environment.advancedMode, let summary = detail.derivatives {
+            DerivativesSummaryView(summary: summary)
+          }
+          if environment.advancedMode, let historyError = detail.historyError {
             Text(historyError).font(.caption).foregroundStyle(.secondary)
           }
-          if detail.account.provider == "trade_republic", detail.account.sourceType == "manual" {
+          if environment.advancedMode, detail.account.provider == "trade_republic",
+            detail.account.sourceType == "manual"
+          {
             VStack(alignment: .leading, spacing: 10) {
               Text("Trade Republic · Manual").font(.subheadline).foregroundStyle(.secondary)
               if let imported = detail.account.lastImportedAt {
@@ -54,80 +64,79 @@ struct AccountDetailView: View {
               NavigationLink("Import history") { CSVImportHistoryView(accountID: accountID) }
             }
           }
-          Text("Positions").font(.headline)
-          if detail.account.sourceType == "manual", detail.positions.isEmpty {
-            Button(
-              detail.account.assetClass == "cash" ? "Add your balance" : "Add your first holding"
-            ) {
-              firstHoldingPresented = true
-            }.buttonStyle(.borderedProminent)
-          }
-          ForEach(detail.positions.filter { $0.assetType != "cash" || detail.derivatives == nil }) {
-            position in
-            VStack(alignment: .leading, spacing: 5) {
-              HStack {
-                Text(position.symbol).font(.headline)
-                Spacer()
-                if let value = position.marketValue {
-                  Text(FinanceFormat.amount(value, currency: position.currency)).monospacedDigit()
-                } else {
-                  Text("Price unavailable").foregroundStyle(.secondary)
-                }
-              }
-              Text(
-                position.quantity.map {
-                  "\(position.side.map { $0.capitalized + " " } ?? "")\(FinanceFormat.quantity($0)) · \(accountSourceTitle(position.source))"
-                } ?? "Quantity unknown · \(accountSourceTitle(position.source))"
-              ).font(.subheadline).foregroundStyle(.secondary)
-              if position.assetType == "perp" {
-                if detail.account.sourceType == "dydx" {
-                  NavigationLink(
-                    "Price history",
-                    destination: MarketPriceView(assetID: position.assetId, symbol: position.symbol)
-                  ).accessibilityIdentifier("market-price-history")
-                }
-                Text("Position exposure").font(.caption).foregroundStyle(.secondary)
-                LabeledContent(
-                  "Entry price",
-                  value: position.entryPrice.map {
-                    FinanceFormat.amount($0, currency: position.currency)
-                  } ?? "Unavailable")
-                LabeledContent(
-                  "Valuation price",
-                  value: position.price.map {
-                    FinanceFormat.amount($0, currency: position.currency)
-                  } ?? "Unavailable")
-                if let leverage = position.leverage {
+          VStack(alignment: .leading, spacing: 12) {
+            Text("Holdings").font(.headline)
+            if detail.account.sourceType == "manual", detail.positions.isEmpty {
+              Button(
+                detail.account.assetClass == "cash" ? "Add your balance" : "Add your first holding"
+              ) {
+                firstHoldingPresented = true
+              }.buttonStyle(.borderedProminent)
+            }
+            ForEach(detail.positions.filter { $0.assetType != "cash" || detail.derivatives == nil })
+            {
+              position in
+              VStack(alignment: .leading, spacing: 5) {
+                HoldingSummaryRow(
+                  name: position.name, symbol: position.symbol,
+                  logoUrl: position.logoUrl, quantity: position.quantity,
+                  value: position.marketValue,
+                  currency: position.currency, side: position.side,
+                  exposure: position.assetType == "perp")
+                if environment.advancedMode, position.assetType == "perp" {
+                  if detail.account.sourceType == "dydx" {
+                    NavigationLink(
+                      "Price history",
+                      destination: MarketPriceView(
+                        assetID: position.assetId, symbol: position.symbol)
+                    ).accessibilityIdentifier("market-price-history")
+                  }
+                  Text("Position exposure").font(.caption).foregroundStyle(.secondary)
                   LabeledContent(
-                    "Exposure / equity",
-                    value: NSDecimalNumber(decimal: leverage.decimal).doubleValue.formatted(
-                      .number.precision(.fractionLength(2))) + "×")
-                }
-                if let liquidation = position.liquidationPrice {
+                    "Entry price",
+                    value: position.entryPrice.map {
+                      FinanceFormat.amount($0, currency: position.currency)
+                    } ?? "Unavailable")
                   LabeledContent(
-                    "Liquidation price",
-                    value: FinanceFormat.amount(liquidation, currency: position.currency))
+                    "Valuation price",
+                    value: position.price.map {
+                      FinanceFormat.amount($0, currency: position.currency)
+                    } ?? "Unavailable")
+                  if let leverage = position.leverage {
+                    LabeledContent(
+                      "Exposure / equity",
+                      value: NSDecimalNumber(decimal: leverage.decimal).doubleValue.formatted(
+                        .number.precision(.fractionLength(2))) + "×")
+                  }
+                  if let liquidation = position.liquidationPrice {
+                    LabeledContent(
+                      "Liquidation price",
+                      value: FinanceFormat.amount(liquidation, currency: position.currency))
+                  }
                 }
-              }
-              if let pnl = position.unrealizedPnl {
-                Text("Unrealized PnL: \(FinanceFormat.amount(pnl, currency: position.currency))")
+                if let pnl = position.unrealizedPnl {
+                  Text(
+                    "\(pnl.decimal >= 0 ? "Gain" : "Loss"): \(FinanceFormat.amount(pnl, currency: position.currency))"
+                  )
                   .font(.caption).foregroundStyle(pnl.decimal >= 0 ? Color.green : Color.red)
-              }
-              if position.costBasis == nil && position.unrealizedPnl == nil
-                && detail.account.sourceType != "evm_wallet"
-              {
-                Text("Return unavailable · incomplete cost basis").font(.caption).foregroundStyle(
-                  .secondary)
-              }
-              if let at = position.observedAt {
-                Text(
-                  "\(position.stale ? "Stale · " : "")\(at.formatted(date: .abbreviated, time: .shortened))"
-                ).font(.caption).foregroundStyle(.secondary)
-              }
-            }.padding(14)
-              .background(Color.primary.opacity(0.045), in: .rect(cornerRadius: 16))
+                }
+                if environment.advancedMode,
+                  position.costBasis == nil && position.unrealizedPnl == nil
+                    && detail.account.sourceType != "evm_wallet"
+                {
+                  Text("Return unavailable · incomplete cost basis").font(.caption).foregroundStyle(
+                    .secondary)
+                }
+                if environment.advancedMode, let at = position.observedAt {
+                  Text(
+                    "\(position.stale ? "Stale · " : "")\(at.formatted(date: .abbreviated, time: .shortened))"
+                  ).font(.caption).foregroundStyle(.secondary)
+                }
+              }.padding(.vertical, 6)
+              Divider()
+            }
           }
-          if detail.derivatives != nil {
+          if environment.advancedMode, detail.derivatives != nil {
             DisclosureGroup("Collateral ledger") {
               ForEach(detail.positions.filter { $0.assetType == "cash" }) { position in
                 LabeledContent(
@@ -146,7 +155,17 @@ struct AccountDetailView: View {
           }
           if !detail.activity.isEmpty {
             Text("Recent activity").font(.headline)
-            ForEach(detail.activity.prefix(20)) { item in ActivityRow(transaction: item) }
+            ForEach(detail.activity.filter { !$0.isVoided }.prefix(20)) { item in
+              if detail.account.sourceType == "manual", item.allowsManualCorrection {
+                NavigationLink {
+                  TransactionEditView(transactionID: item.id)
+                } label: {
+                  ActivityRow(transaction: item)
+                }.buttonStyle(.plain).modifier(TransactionRemovalActions(transactionID: item.id))
+              } else {
+                ActivityRow(transaction: item)
+              }
+            }
           }
         } else if error == nil {
           ProgressView("Loading account").frame(maxWidth: .infinity, minHeight: 220)
@@ -162,17 +181,30 @@ struct AccountDetailView: View {
       }
       .navigationBarTitleDisplayMode(.inline)
       .toolbar {
-        if detail?.account.sourceType != "manual" {
-          ToolbarItem(placement: .topBarTrailing) {
-            Button {
-              Task { await sync() }
-            } label: {
-              AppIcon(name: .sync, size: 20).frame(width: 44, height: 44)
+        ToolbarItem(placement: .topBarTrailing) {
+          Menu {
+            if let detail, detail.account.sourceType != "manual" {
+              Button("Refresh account") { Task { await sync() } }.disabled(syncing)
             }
-            .accessibilityLabel("Sync account")
-            .disabled(syncing)
+            if detail?.account.sourceType == "manual", detail?.account.provider == "trade_republic"
+            {
+              Button("Import CSV") { csvPresented = true }
+              NavigationLink("Import history") { CSVImportHistoryView(accountID: accountID) }
+            }
+            Button("Remove account", role: .destructive) { confirmRemoval = true }
+              .disabled(detail == nil || removing)
+          } label: {
+            Image(systemName: "ellipsis").frame(width: 44, height: 44)
           }
+          .accessibilityLabel("Account actions")
         }
+      }
+      .confirmationDialog(
+        "Remove this account?", isPresented: $confirmRemoval, titleVisibility: .visible
+      ) {
+        Button("Remove account", role: .destructive) { Task { await removeAccount() } }
+      } message: {
+        Text("This account will leave your portfolio and stop updating. Its records will be kept.")
       }
       .sheet(isPresented: $firstHoldingPresented) {
         if let account = detail?.account {
@@ -191,6 +223,19 @@ struct AccountDetailView: View {
       }
       .refreshable { await load() }
   }
+  private func removeAccount() async {
+    guard let api = environment.api else { return }
+    removing = true
+    defer { removing = false }
+    do {
+      let _: JSONValue = try await api.send("accounts/\(accountID)", method: "DELETE")
+      await environment.cache?.clear()
+      environment.dataRevision += 1
+      dismiss()
+    } catch {
+      self.error = "Couldn’t remove this account. Try again. " + error.localizedDescription
+    }
+  }
   private func sync() async {
     syncing = true
     defer { syncing = false }
@@ -206,6 +251,7 @@ struct AccountDetailView: View {
     let requestedRange = range
     let key = "account-\(accountID)-\(requestedRange.rawValue)"
     let id = accountID
+    let cacheGeneration = await environment.cache?.generation
     await snapshot.load(
       key: key,
       cached: { await environment.cache?.read(key, as: AccountDetail.self) },
@@ -213,7 +259,7 @@ struct AccountDetailView: View {
         try await api.send(
           "accounts/\(id)/detail",
           query: [URLQueryItem(name: "range", value: requestedRange.rawValue)])
-      }, save: { await environment.cache?.write($0, key: key) })
+      }, save: { await environment.cache?.write($0, key: key, generation: cacheGeneration) })
   }
 }
 
@@ -231,42 +277,52 @@ struct AccountSyncStatusView: View {
         if run.status == "queued" || run.status == "running" {
           ProgressView("Updating balances…").font(.subheadline)
         } else if run.status == "partial" || run.status == "failed" {
-          DisclosureGroup {
-            VStack(alignment: .leading, spacing: 10) {
-              if let failure = run.failure { Text(failure.message) }
-              ForEach(run.warnings ?? [], id: \.self) { Text($0) }
-              Button("Retry sync") { Task { await retry() } }.disabled(retrying)
-                .buttonStyle(.bordered)
-            }.font(.caption).foregroundStyle(.secondary).padding(.top, 8)
-          } label: {
-            HStack(alignment: .top, spacing: 10) {
-              Image(systemName: run.status == "failed" ? "exclamationmark.circle" : "info.circle")
-                .foregroundStyle(run.status == "failed" ? Color.orange : Color.secondary)
-              VStack(alignment: .leading, spacing: 3) {
-                Text(run.status == "failed" ? "Sync needs another try" : "Balances updated")
-                  .font(.subheadline.weight(.medium))
-                Text(
-                  run.status == "failed"
-                    ? "Your saved holdings are still available."
-                    : "Some values or networks are incomplete."
-                )
-                .font(.caption).foregroundStyle(.secondary)
+          if !environment.advancedMode {
+            HStack {
+              Text(
+                run.status == "failed"
+                  ? "Couldn’t update this account." : "Some balances are unavailable.")
+              Spacer()
+              Button("Retry") { Task { await retry() } }.disabled(retrying)
+            }.font(.caption).foregroundStyle(.secondary)
+          } else {
+            DisclosureGroup {
+              VStack(alignment: .leading, spacing: 10) {
+                if let failure = run.failure { Text(failure.message) }
+                ForEach(run.warnings ?? [], id: \.self) { Text($0) }
+                Button("Retry sync") { Task { await retry() } }.disabled(retrying)
+                  .buttonStyle(.bordered)
+              }.font(.caption).foregroundStyle(.secondary).padding(.top, 8)
+            } label: {
+              HStack(alignment: .top, spacing: 10) {
+                Image(systemName: run.status == "failed" ? "exclamationmark.circle" : "info.circle")
+                  .foregroundStyle(run.status == "failed" ? Color.orange : Color.secondary)
+                VStack(alignment: .leading, spacing: 3) {
+                  Text(run.status == "failed" ? "Sync needs another try" : "Balances updated")
+                    .font(.subheadline.weight(.medium))
+                  Text(
+                    run.status == "failed"
+                      ? "Your saved holdings are still available."
+                      : "Some values or networks are incomplete."
+                  )
+                  .font(.caption).foregroundStyle(.secondary)
+                }
               }
-            }
-          }.tint(.secondary).accessibilityIdentifier("account-sync-details")
-        } else if run.status == "success" {
+            }.tint(.secondary).accessibilityIdentifier("account-sync-details")
+          }
+        } else if run.status == "success", environment.advancedMode {
           Label("Up to date", systemImage: "checkmark.circle")
             .font(.caption).foregroundStyle(.secondary)
         }
       }
       if let error {
-        Text(error).font(.caption).foregroundStyle(.secondary)
+        Text(environment.advancedMode ? error : "Couldn’t check for updates.").font(.caption)
+          .foregroundStyle(.secondary)
         Button("Retry") { Task { await retry() } }.disabled(retrying)
       }
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(14)
-    .background(Color.primary.opacity(0.045), in: .rect(cornerRadius: 16))
+    .padding(.vertical, environment.advancedMode ? 8 : 0)
     .task(id: "\(scenePhase)-\(pollGeneration)") {
       guard scenePhase == .active else { return }
       while !Task.isCancelled {

@@ -2,6 +2,7 @@ import Charts
 import SwiftUI
 
 struct PortfolioValueChart: View {
+  @Environment(AppEnvironment.self) private var environment
   let dashboard: PortfolioDashboard
   @Binding var range: PortfolioRange
   let compactEmptyHistory: Bool
@@ -30,6 +31,8 @@ struct PortfolioValueChart: View {
 
   var body: some View {
     let selected = self.selected
+    let segmentCounts = Dictionary(grouping: dashboard.chart, by: { $0.segmentId ?? "complete" })
+      .mapValues(\.count)
     VStack(alignment: .leading, spacing: 12) {
       Text(FinanceFormat.amount(selected?.value ?? dashboard.value, currency: dashboard.currency))
         .font(.system(.largeTitle, design: .rounded, weight: .semibold))
@@ -86,7 +89,7 @@ struct PortfolioValueChart: View {
                 "Value change for \(dashboard.range.title): \(FinanceFormat.amount(change, currency: dashboard.currency)), \(FinanceFormat.percent(percent))"
               )
             } else {
-              Text("Period change unavailable")
+              Text("Change unavailable")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             }
@@ -95,36 +98,9 @@ struct PortfolioValueChart: View {
           .allowsHitTesting(selected == nil)
           .accessibilityHidden(selected != nil)
         }
-        .frame(minHeight: 44, alignment: .leading)
+        .frame(minHeight: 28, alignment: .leading)
         .animation(AppMotion.fade(reduceMotion), value: selected != nil)
         .accessibilityIdentifier("chart-subtitle")
-      }
-
-      if !(selected?.complete ?? dashboard.complete)
-        || dashboard.chart.contains(where: { $0.complete == false })
-      {
-        Button {
-          coverageInspection = CoverageInspection(
-            issues: selected?.coverage?.missing ?? dashboard.valuationIssues ?? [],
-            title: selected == nil ? "Valuation coverage" : "Coverage at selected date")
-        } label: {
-          Label(
-            !(selected?.complete ?? dashboard.complete)
-              ? "Known value · some holdings are unavailable"
-              : "Partial history · inspect coverage", systemImage: "info.circle"
-          )
-          .font(.caption).multilineTextAlignment(.leading).frame(minHeight: 44)
-        }
-        .accessibilityIdentifier("valuation-coverage")
-      }
-      if dashboard.historyStatus == "loading" {
-        ProgressView("Recovering historical values…").font(.caption)
-      } else if dashboard.historyStatus == "paused" {
-        Text("History recovery paused · see account for details").font(.caption).foregroundStyle(
-          .secondary)
-      } else if dashboard.historyStatus == "failed" {
-        Text("History recovery needs attention · open the account to retry").font(.caption)
-          .foregroundStyle(.secondary)
       }
 
       Group {
@@ -135,9 +111,6 @@ struct PortfolioValueChart: View {
                 ? "History is loading" : "No recorded values for this period"
             )
             .font(.subheadline.weight(.medium))
-            if compactEmptyHistory {
-              Text("No recorded values in this period yet.").font(.caption)
-            }
           }
           .foregroundStyle(.secondary)
           .fixedSize(horizontal: false, vertical: true)
@@ -145,20 +118,21 @@ struct PortfolioValueChart: View {
         } else {
           Chart {
             ForEach(dashboard.chart) { point in
-              PointMark(
-                x: .value("Date", point.at),
-                y: .value("Value", NSDecimalNumber(decimal: point.value.decimal).doubleValue)
-              )
-              .foregroundStyle(Color.accentColor)
-              .symbolSize(30)
+              if segmentCounts[point.segmentId ?? "complete"] == 1 {
+                PointMark(
+                  x: .value("Date", point.at),
+                  y: .value("Value", NSDecimalNumber(decimal: point.value.decimal).doubleValue)
+                )
+                .foregroundStyle(Color.accentColor).symbolSize(24)
+              }
               LineMark(
                 x: .value("Date", point.at),
                 y: .value("Value", NSDecimalNumber(decimal: point.value.decimal).doubleValue),
                 series: .value("Coverage", point.segmentId ?? "complete")
               )
-              .interpolationMethod(.linear)
+              .interpolationMethod(.monotone)
               .foregroundStyle(Color.accentColor)
-              .lineStyle(StrokeStyle(lineWidth: 2))
+              .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
               .accessibilityLabel(point.at.formatted(date: .abbreviated, time: .omitted))
               .accessibilityValue(FinanceFormat.amount(point.value, currency: dashboard.currency))
             }
@@ -175,7 +149,13 @@ struct PortfolioValueChart: View {
           .chartYScale(domain: .automatic(includesZero: false))
           .chartYAxis(.hidden)
           .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: typeSize.isAccessibilitySize ? 2 : 3))
+            if typeSize.isAccessibilitySize {
+              AxisMarks(values: [dashboard.chart[dashboard.chart.count / 2].at]) {
+                AxisValueLabel(format: .dateTime.day().month(.abbreviated))
+              }
+            } else {
+              AxisMarks(values: .automatic(desiredCount: 3)) { AxisValueLabel() }
+            }
           }
           .chartXSelection(value: $selectedDate)
           .frame(height: 200)
@@ -189,6 +169,37 @@ struct PortfolioValueChart: View {
       .accessibilityIdentifier("portfolio-chart-plot")
 
       ChartRangePicker(selection: $range)
+      if !(selected?.complete ?? dashboard.complete)
+        || dashboard.chart.contains(where: { $0.complete == false })
+        || dashboard.valuationIssues?.isEmpty == false
+      {
+        Button {
+          coverageInspection = CoverageInspection(
+            issues: selected?.coverage?.missing ?? dashboard.valuationIssues ?? [],
+            title: selected == nil ? "Valuation coverage" : "Coverage at selected date")
+        } label: {
+          Label(
+            !(selected?.complete ?? dashboard.complete)
+              ? "Some values unavailable"
+              : "Incomplete history", systemImage: "info.circle"
+          )
+          .font(.caption).multilineTextAlignment(.leading).frame(minHeight: 44)
+        }
+        .accessibilityIdentifier("valuation-coverage")
+      }
+      if environment.advancedMode {
+        if dashboard.historyStatus == "loading" {
+          ProgressView("Recovering historical values…").font(.caption)
+        } else if dashboard.historyStatus == "paused" {
+          Text("History recovery paused · see account for details").font(.caption).foregroundStyle(
+            .secondary)
+        } else if dashboard.historyStatus == "failed" {
+          Text("History recovery needs attention · open the account to retry").font(.caption)
+            .foregroundStyle(.secondary)
+        }
+
+      }
+
     }
     .sheet(item: $coverageInspection) { inspection in
       NavigationStack {
@@ -294,21 +305,26 @@ struct ValuationIssuesView: View {
   @State private var result: String?
   var body: some View {
     List {
-      Text(
-        "Unknown values are excluded from the known value. Chart lines break when coverage changes. Select a chart date to inspect its missing values."
-      )
-      .font(.callout).foregroundStyle(.secondary)
+      if environment.advancedMode {
+        Text(
+          "Unknown values are excluded from the known value. Chart lines break when coverage changes. Select a chart date to inspect its missing values."
+        )
+        .font(.callout).foregroundStyle(.secondary)
+      }
       ForEach(Array(issues.enumerated()), id: \.offset) { _, issue in
         VStack(alignment: .leading, spacing: 6) {
           Text(issue.name).font(.headline)
-          if let network = issue.network {
+          if environment.advancedMode, let network = issue.network {
             Text(network).font(.caption).foregroundStyle(.secondary)
           }
-          if let contract = issue.contractAddress {
+          if environment.advancedMode, let contract = issue.contractAddress {
             Text(contract).font(.caption2).textSelection(.enabled)
           }
-          Text(issue.message).font(.callout)
-          if let date = issue.quotedAt { Text("Last quote: " + date.formatted()).font(.caption) }
+          Text(environment.advancedMode ? issue.message : "This value couldn’t be updated.").font(
+            .callout)
+          if environment.advancedMode, let date = issue.quotedAt {
+            Text("Last quote: " + date.formatted()).font(.caption)
+          }
           if issue.retryable {
             Button(
               issue.code == "missing_fx"

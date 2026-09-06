@@ -347,6 +347,16 @@ export class PortfolioService {
         name: a.name,
         assetClass: a.assetClass,
         sourceType: a.sourceType,
+        provider:
+          a.provider ??
+          (a.sourceType === "evm_wallet" &&
+          !a.institution &&
+          Array.isArray(a.metadata.configuredNetworks) &&
+          a.metadata.configuredNetworks.length === 1 &&
+          a.metadata.configuredNetworks[0] === "base-mainnet"
+            ? "base"
+            : null),
+        institution: a.institution,
         isDemo: a.metadata.demo === true,
         value,
         complete,

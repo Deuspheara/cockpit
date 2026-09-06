@@ -8,7 +8,7 @@ import { readConfig } from "../src/config.js";
 import type { Database } from "../src/db/index.js";
 import type { Cache } from "../src/shared/cache.js";
 
-const accountId = "00000000-0000-0000-0000-000000000001";
+const accountId = "00000000-0000-4000-8000-000000000001";
 const assetId = "00000000-0000-0000-0000-000000000002";
 const row = {
   assetId,
@@ -82,4 +82,35 @@ describe("portfolio assets logo enrichment", () => {
       }
     },
   );
+});
+
+it("archives through DELETE and invalidates cached portfolio responses", async () => {
+  const archive = vi
+    .spyOn(AccountService.prototype, "archive")
+    .mockResolvedValue({ id: accountId, isArchived: true } as Awaited<
+      ReturnType<AccountService["archive"]>
+    >);
+  const incr = vi.fn(async () => 2);
+  const app = Fastify();
+  try {
+    await registerFinanceRoutes(
+      app,
+      {} as Database,
+      { incr } as unknown as Cache,
+      readConfig({
+        DATABASE_URL: "postgres://localhost/test",
+        REDIS_URL: "redis://localhost",
+      }),
+    );
+    const response = await app.inject({
+      method: "DELETE",
+      url: `/api/v1/accounts/${accountId}`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().isArchived).toBe(true);
+    expect(archive).toHaveBeenCalledWith(accountId);
+    expect(incr).toHaveBeenCalledWith("portfolio:revision");
+  } finally {
+    await app.close();
+  }
 });

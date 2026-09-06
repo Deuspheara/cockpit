@@ -247,7 +247,7 @@ export class ChangeSetService {
       .sql`SELECT * FROM transactions WHERE id=${id}`;
     if (!record) throw new NotFoundError();
     await this.requireManual(String(record.accountId));
-    if (record.externalId)
+    if (record.externalId && record.provider !== "trade_republic")
       throw new ConflictError("Provider activity is read-only");
     const before = json(record);
     const after: RecordValue =

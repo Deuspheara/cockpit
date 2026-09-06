@@ -105,7 +105,7 @@ export class CsvImportService {
         sourceType: string;
         isArchived: boolean;
       }[]
-    >`SELECT id,name,provider,provider_account_key,source_type,is_archived FROM accounts WHERE NOT is_archived AND source_type='manual'`;
+    >`SELECT id,name,provider,provider_account_key,source_type,is_archived FROM accounts WHERE NOT is_archived AND source_type='manual' FOR SHARE`;
   }
   private async validateDestinations(sql: SQL, destinations: Destination[]) {
     const accounts = await this.accounts(sql),

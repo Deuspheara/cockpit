@@ -43,6 +43,7 @@ export interface Account {
   assetClass: string;
   sourceType: string;
   institution: string | null;
+  provider?: string | null;
   baseCurrency: string;
   externalAddress: string | null;
   externalSubaccount: number | null;

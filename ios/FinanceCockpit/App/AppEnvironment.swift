@@ -12,6 +12,9 @@ struct AIAvailability: Equatable, Sendable {
 
 @MainActor @Observable
 final class AppEnvironment {
+  var advancedMode = UserDefaults.standard.bool(forKey: "advancedMode") {
+    didSet { UserDefaults.standard.set(advancedMode, forKey: "advancedMode") }
+  }
   var api: APIClient?
   var cache: AppCache?
   var serverURL: String
@@ -30,6 +33,9 @@ final class AppEnvironment {
     serverURL = UserDefaults.standard.string(forKey: "serverURL") ?? ""
     #if DEBUG
       if ProcessInfo.processInfo.arguments.contains("--ui-fixtures") {
+        if !ProcessInfo.processInfo.arguments.contains("--preserve-mode") {
+          advancedMode = ProcessInfo.processInfo.arguments.contains("--advanced-ui")
+        }
         serverURL = "https://fixtures.invalid"
         let configuration = try! APIConfiguration(
           server: serverURL, token: String(repeating: "a", count: 43))

@@ -16,6 +16,20 @@ private final class OfflineLogoProtocol: URLProtocol, @unchecked Sendable {
 
 @MainActor
 final class AssetLogoTests: XCTestCase {
+  func testReadableNamesAndProviderIdentity() {
+    XCTAssertEqual(HoldingPresentation.name("Apple", symbol: "AAPL"), "Apple")
+    XCTAssertEqual(HoldingPresentation.name("  ", symbol: "UNKNOWN"), "UNKNOWN")
+    XCTAssertEqual(
+      ProviderBrand.resolve(sourceType: "manual", provider: "trade_republic"), .tradeRepublic)
+    XCTAssertEqual(
+      ProviderBrand.resolve(sourceType: "manual", name: "Trade Republic"), .tradeRepublic)
+    XCTAssertEqual(ProviderBrand.resolve(sourceType: "evm_wallet", institution: "Base"), .base)
+    XCTAssertEqual(ProviderBrand.resolve(sourceType: "evm_wallet"), .generic)
+    XCTAssertEqual(
+      ProviderBrand.resolve(sourceType: "manual", name: "Not Trade Republic"), .generic)
+    XCTAssertNotNil(UIImage(named: "BrandTradeRepublic"))
+    XCTAssertNotNil(UIImage(named: "BrandBase"))
+  }
   private let logoURL = URL(
     string: "https://static.coinpaprika.com/coin/hype-hyperliquid/logo.png")!
 
@@ -82,6 +96,7 @@ final class AssetLogoTests: XCTestCase {
       .padding(20)
       .frame(width: 402, height: 850, alignment: .topLeading)
       .background(Color(uiColor: .systemBackground))
+      .environment(AppEnvironment())
       .environment(\.colorScheme, scheme)
       .environment(\.dynamicTypeSize, textSize)
       let controller = UIHostingController(rootView: content)

@@ -8,7 +8,7 @@ export class RecurringService {
   async list() {
     return this.database.sql<
       Rule[]
-    >`SELECT * FROM recurring_rules ORDER BY start_on,id`;
+    >`SELECT r.* FROM recurring_rules r JOIN accounts a ON a.id=r.account_id WHERE NOT a.is_archived ORDER BY r.start_on,r.id`;
   }
   async get(id: string) {
     const [r] = await this.database.sql<

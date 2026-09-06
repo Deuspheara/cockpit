@@ -80,10 +80,26 @@ struct AppEmptyState: View {
 }
 
 enum ProviderBrand: Equatable {
-  case hyperliquid, dydx, generic
+  case hyperliquid, dydx, tradeRepublic, base, generic
 
-  static func resolve(sourceType: String) -> ProviderBrand {
-    switch sourceType.lowercased() {
+  static func resolve(
+    sourceType: String, provider: String? = nil, institution: String? = nil, name: String? = nil
+  ) -> ProviderBrand {
+    func brand(_ value: String?) -> ProviderBrand? {
+      switch value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+      case "trade_republic", "trade republic", "traderepublic": .tradeRepublic
+      case "base": .base
+      case "dydx": .dydx
+      case "hyperliquid": .hyperliquid
+      default: nil
+      }
+    }
+    if let identified = brand(provider) ?? brand(institution) { return identified }
+    if provider == nil && institution == nil, brand(name) == .tradeRepublic {
+      return .tradeRepublic
+    }
+    return switch sourceType.lowercased() {
+    case "base": .base
     case "hyperliquid": .hyperliquid
     case "dydx": .dydx
     default: .generic
@@ -93,11 +109,16 @@ enum ProviderBrand: Equatable {
 
 struct ProviderLogo: View {
   let sourceType: String
+  var provider: String? = nil
+  var institution: String? = nil
+  var name: String? = nil
   var size: CGFloat = 36
 
   var body: some View {
     Group {
-      switch ProviderBrand.resolve(sourceType: sourceType) {
+      switch ProviderBrand.resolve(
+        sourceType: sourceType, provider: provider, institution: institution, name: name)
+      {
       case .hyperliquid:
         Image("BrandHyperliquid")
           .resizable()
@@ -110,6 +131,12 @@ struct ProviderLogo: View {
           .scaledToFit()
           .padding(7)
           .background(Color(red: 0.12, green: 0.10, blue: 0.27), in: .rect(cornerRadius: 10))
+      case .tradeRepublic:
+        Image("BrandTradeRepublic").resizable().scaledToFit().padding(7)
+          .background(.white, in: .rect(cornerRadius: 10))
+      case .base:
+        Image("BrandBase").resizable().scaledToFit().padding(7)
+          .background(Color(red: 0, green: 0.2, blue: 1), in: .rect(cornerRadius: 10))
       case .generic:
         AppIcon(name: .wallet, size: 22)
           .frame(maxWidth: .infinity, maxHeight: .infinity)

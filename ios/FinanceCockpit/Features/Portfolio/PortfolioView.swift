@@ -33,7 +33,13 @@ struct PortfolioView: View {
             emptyState
           } else {
             PortfolioValueChart(dashboard: dashboard, range: $model.range)
-            allocation(dashboard)
+            if environment.advancedMode {
+              allocation(dashboard)
+            } else {
+              NavigationLink("View allocation") {
+                ScrollView { allocation(dashboard).padding(20) }.navigationTitle("Allocation")
+              }.font(.subheadline)
+            }
             Picker("View", selection: $showAssets) {
               Text("Accounts").tag(false)
               Text("Assets").tag(true)
@@ -196,12 +202,19 @@ struct PortfolioView: View {
               AccountDetailView(accountID: account.id)
             } label: {
               HStack(spacing: 12) {
-                ProviderLogo(sourceType: account.sourceType)
+                ProviderLogo(
+                  sourceType: account.sourceType, provider: account.provider,
+                  institution: account.institution, name: account.name)
                 VStack(alignment: .leading, spacing: 3) {
                   Text(account.name).foregroundStyle(.primary)
-                  Text(account.freshnessDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                  if environment.advancedMode || account.stale || account.syncStatus == "running" {
+                    Text(
+                      environment.advancedMode
+                        ? account.freshnessDescription
+                        : account.syncStatus == "running" ? "Updating…" : "Update needed"
+                    )
+                    .font(.caption).foregroundStyle(.secondary)
+                  }
                 }
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 3) {
@@ -229,7 +242,7 @@ struct PortfolioView: View {
 
   private func load() async {
     guard let api = environment.api else { return }
-    await model.load(api: api, cache: environment.cache)
+    await model.load(api: api, cache: environment.cache, revision: environment.dataRevision)
     if model.error == nil { environment.lastSuccessfulRefresh = Date() }
   }
 }

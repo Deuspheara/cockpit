@@ -30,13 +30,29 @@ export class AccountService {
     });
   }
 
+  async archive(id: string) {
+    return this.database.sql.begin(async (tx) => {
+      // Same lock order as financial writers. Row locks also serialize in-flight imports.
+      await tx`SELECT pg_advisory_xact_lock(64023002)`;
+      const [before] =
+        await tx`SELECT * FROM accounts WHERE id=${id} FOR UPDATE`;
+      if (!before) throw new NotFoundError("Account not found");
+      if (before.isArchived) return before;
+      const [after] =
+        await tx`UPDATE accounts SET is_archived=true,updated_at=now() WHERE id=${id} RETURNING *`;
+      await tx`UPDATE sync_runs SET status='failed',finished_at=now(),error_message='Account removed' WHERE account_id=${id} AND status IN ('queued','running')`;
+      await tx`UPDATE evm_history_jobs SET status='failed',error='Account removed',updated_at=now() WHERE account_id=${id} AND status IN ('queued','running','paused')`;
+      await tx`INSERT INTO audit_log(actor,action,entity_type,entity_id,before,after) VALUES('user','archive','account',${id},${tx.json(before)},${tx.json(after!)})`;
+      return after!;
+    });
+  }
   async rename(id: string, name: string) {
     if (!name.trim() || name.length > 120)
       throw new AppError("VALIDATION_ERROR", "Invalid name");
     return this.database.sql.begin(async (tx) => {
       const [before] =
         await tx`SELECT * FROM accounts WHERE id=${id} FOR UPDATE`;
-      if (!before) throw new NotFoundError();
+      if (!before || before.isArchived) throw new NotFoundError();
       const [after] =
         await tx`UPDATE accounts SET name=${name.trim()},updated_at=now() WHERE id=${id} RETURNING *`;
       await tx`INSERT INTO audit_log(actor,action,entity_type,entity_id,before,after) VALUES('user','rename','account',${id},${tx.json(before)},${tx.json(after!)})`;

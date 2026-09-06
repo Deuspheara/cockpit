@@ -31,7 +31,7 @@ import XCTest
     add(capture)
   }
   func testPartialBaseHistoryCoverageAndRetry() {
-    let app = launch(["--wallet-layout", "--partial-history"])
+    let app = launch(["--wallet-layout", "--partial-history", "--advanced-ui"])
     XCTAssertTrue(app.buttons["valuation-coverage"].waitForExistence(timeout: 5))
     capture("Partial Base chart", app)
     app.buttons["valuation-coverage"].tap()
@@ -39,7 +39,9 @@ import XCTest
     XCTAssertTrue(app.staticTexts["base-mainnet"].exists)
     capture("Missing token diagnostics", app)
     app.buttons["Done"].tap()
-    let row = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "portfolio-account-")).firstMatch
+    let row = app.buttons.matching(
+      NSPredicate(format: "identifier BEGINSWITH %@", "portfolio-account-")
+    ).firstMatch
     reveal(row, app)
     row.tap()
     let retry = app.buttons["recover-base-history"]
@@ -190,7 +192,9 @@ import XCTest
   func testGuidedSelectionWithLargeText() { guidedSelection(largeText: true) }
   private func guidedSelection(largeText: Bool) {
     let app = XCUIApplication()
-    app.launchArguments = ["--ui-fixtures", "--fresh-import", "--unresolved-import", "--dark"] + (largeText ? ["--large-text"] : [])
+    app.launchArguments =
+      ["--ui-fixtures", "--fresh-import", "--unresolved-import", "--dark"]
+      + (largeText ? ["--large-text"] : [])
     app.launch()
     XCTAssertTrue(app.buttons["Add"].waitForExistence(timeout: 15))
     app.buttons["Add"].tap()
@@ -201,8 +205,12 @@ import XCTest
     app.buttons["Continue"].tap()
     app.buttons["Continue"].tap()
     XCTAssertTrue(app.staticTexts["Suggested match"].waitForExistence(timeout: 5))
-    let choice = app.buttons.containing(.staticText, identifier: "iShares Core MSCI World").firstMatch
-    for _ in 0..<4 { if choice.isHittable { break }; app.swipeUp() }
+    let choice = app.buttons.containing(.staticText, identifier: "iShares Core MSCI World")
+      .firstMatch
+    for _ in 0..<4 {
+      if choice.isHittable { break }
+      app.swipeUp()
+    }
     choice.tap()
     let capture = XCTAttachment(screenshot: app.screenshot())
     capture.name = largeText ? "Guided selection large text" : "Guided investment selection"
@@ -262,7 +270,6 @@ import XCTest
   }
 }
 
-
 @MainActor final class WalletLayoutTests: XCTestCase {
   func testPartialWalletKeepsPositionsVisibleAndDetailsExpandable() {
     checkLayout(largeText: false)
@@ -272,26 +279,126 @@ import XCTest
   }
   private func checkLayout(largeText: Bool) {
     let app = XCUIApplication()
-    app.launchArguments = ["--ui-fixtures", "--wallet-layout", "--dark"] + (largeText ? ["--large-text"] : [])
+    app.launchArguments =
+      ["--ui-fixtures", "--wallet-layout", "--dark"] + (largeText ? ["--large-text"] : [])
     app.launch()
     let wallet = app.buttons.containing(.staticText, identifier: "Base Eth").firstMatch
     XCTAssertTrue(wallet.waitForExistence(timeout: 15))
-    for _ in 0..<5 { if wallet.isHittable { break }; app.swipeUp() }
+    for _ in 0..<5 {
+      if wallet.isHittable { break }
+      app.swipeUp()
+    }
     wallet.tap()
     XCTAssertTrue(app.staticTexts["EVM wallet"].waitForExistence(timeout: 5))
     XCTAssertTrue(app.staticTexts["No recorded values for this period"].exists)
     XCTAssertFalse(app.staticTexts["evm_wallet"].exists)
     XCTAssertFalse(app.buttons["Retry sync"].exists)
     let balance = app.staticTexts["ETH"]
-    for _ in 0..<5 { if balance.isHittable { break }; app.swipeUp() }
+    for _ in 0..<5 {
+      if balance.isHittable { break }
+      app.swipeUp()
+    }
     XCTAssertTrue(balance.isHittable)
     let capture = XCTAttachment(screenshot: app.screenshot())
     capture.name = largeText ? "Wallet accessibility" : "Wallet compact dark"
     capture.lifetime = .keepAlways
     add(capture)
     let details = app.buttons["account-sync-details"]
-    for _ in 0..<5 { if details.isHittable { break }; app.swipeDown() }
+    for _ in 0..<5 {
+      if details.isHittable { break }
+      app.swipeDown()
+    }
     details.tap()
     XCTAssertTrue(app.buttons["Retry sync"].waitForExistence(timeout: 5))
+  }
+}
+
+@MainActor final class SimpleInterfaceTests: XCTestCase {
+  private func openAccount(_ app: XCUIApplication) {
+    let row = app.buttons.matching(
+      NSPredicate(format: "identifier BEGINSWITH %@", "portfolio-account-")
+    ).firstMatch
+    for _ in 0..<5 {
+      if row.isHittable { break }
+      app.swipeUp()
+    }
+    XCTAssertTrue(row.waitForExistence(timeout: 5))
+    row.tap()
+    XCTAssertTrue(app.staticTexts["Holdings"].waitForExistence(timeout: 5))
+  }
+  private func capture(_ name: String, _ app: XCUIApplication) {
+    let attachment = XCTAttachment(screenshot: app.screenshot())
+    attachment.name = name
+    attachment.lifetime = .keepAlways
+    add(attachment)
+  }
+  func testSimpleAccountsAndAdvancedDetails() {
+    for account in ["--wallet-layout", "--csv-account", "--dydx-layout"] {
+      for appearance in [[], ["--dark"], ["--large-text"]] {
+        let app = XCUIApplication()
+        app.launchArguments = ["--ui-fixtures", account] + appearance
+        app.launch()
+        XCTAssertTrue(app.buttons["1M"].waitForExistence(timeout: 15))
+        openAccount(app)
+        XCTAssertFalse(app.staticTexts["Effective leverage"].exists)
+        XCTAssertFalse(app.staticTexts["Base history"].exists)
+        XCTAssertFalse(app.staticTexts["Exposure / equity"].exists)
+        capture("Simple \(account) \(appearance)", app)
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertFalse(app.staticTexts["OpenRouter key"].exists)
+        app.segmentedControls["interface-mode"].buttons["Advanced"].tap()
+        for _ in 0..<4 {
+          if app.staticTexts["OpenRouter key"].exists { break }
+          app.swipeUp()
+        }
+        XCTAssertTrue(app.staticTexts["OpenRouter key"].exists)
+        app.tabBars.buttons["Home"].tap()
+        if account == "--dydx-layout" {
+          for _ in 0..<3 {
+            if app.staticTexts["Effective leverage"].isHittable { break }
+            app.swipeUp()
+          }
+          XCTAssertTrue(app.staticTexts["Effective leverage"].exists)
+        }
+        capture("Advanced \(account) \(appearance)", app)
+        app.terminate()
+      }
+    }
+  }
+  func testManualTransactionDeletionNeedsOneConfirmation() {
+    let app = XCUIApplication()
+    app.launchArguments = ["--ui-fixtures", "--manual-activity"]
+    app.launch()
+    XCTAssertTrue(app.buttons["1M"].waitForExistence(timeout: 15))
+    app.tabBars.buttons["Activity"].tap()
+    let row = app.cells.containing(.staticText, identifier: "Purchase").firstMatch
+    XCTAssertTrue(row.waitForExistence(timeout: 5))
+    row.swipeLeft()
+    app.buttons["Delete transaction"].tap()
+    XCTAssertTrue(app.staticTexts["Delete this transaction?"].waitForExistence(timeout: 5))
+    app.sheets["Delete this transaction?"].buttons["Delete transaction"].tap()
+    XCTAssertTrue(app.staticTexts["No activity yet"].waitForExistence(timeout: 10))
+    XCTAssertFalse(app.navigationBars["Review changes"].exists)
+  }
+  func testModePersistsAndAccountRemovalIsSimple() {
+    let app = XCUIApplication()
+    app.launchArguments = ["--ui-fixtures", "--csv-account"]
+    app.launch()
+    XCTAssertTrue(app.buttons["1M"].waitForExistence(timeout: 15))
+    app.tabBars.buttons["Settings"].tap()
+    app.segmentedControls["interface-mode"].buttons["Advanced"].tap()
+    app.terminate()
+    app.launchArguments += ["--preserve-mode"]
+    app.launch()
+    XCTAssertTrue(app.buttons["1M"].waitForExistence(timeout: 15))
+    app.tabBars.buttons["Settings"].tap()
+    XCTAssertTrue(app.segmentedControls["interface-mode"].buttons["Advanced"].isSelected)
+    app.segmentedControls["interface-mode"].buttons["Simple"].tap()
+    app.tabBars.buttons["Home"].tap()
+    openAccount(app)
+    app.buttons["Account actions"].tap()
+    app.buttons["Remove account"].tap()
+    app.buttons["Remove account"].tap()
+    XCTAssertTrue(app.staticTexts["Your portfolio is empty"].waitForExistence(timeout: 10))
   }
 }

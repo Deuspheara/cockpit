@@ -44,13 +44,23 @@
         ? "DEFAULT" : nil,
       lastImportedAt: ProcessInfo.processInfo.arguments.contains("--csv-account") ? Date() : nil,
       id: UUID(),
-      name: ProcessInfo.processInfo.arguments.contains("--wallet-layout")
-        ? "Base Eth" : "Test investments",
+      name: ProcessInfo.processInfo.arguments.contains("--dydx-layout")
+        ? "dYdX"
+        : ProcessInfo.processInfo.arguments.contains("--csv-account")
+          ? "Trade Republic"
+          : ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+            ? "Base Eth" : "Test investments",
       assetClass: ProcessInfo.processInfo.arguments.contains("--wallet-layout")
         ? "crypto" : "equities",
-      sourceType: ProcessInfo.processInfo.arguments.contains("--wallet-layout")
-        ? "evm_wallet" : "manual",
+      sourceType: ProcessInfo.processInfo.arguments.contains("--dydx-layout")
+        ? "dydx"
+        : ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+          ? "evm_wallet" : "manual",
       baseCurrency: "EUR", externalAddress: nil)
+    var transactionVoided = false
+    var deletionProposed = false
+    let transactionID = UUID()
+    var archived = false
     var accounts: [Account] = []
     var assets = [
       Asset(id: UUID(), symbol: "AAPL", name: "Apple", assetType: "equity", quoteCurrency: "USD")
@@ -168,7 +178,10 @@
         return try importResponse()
       }
       if path.hasPrefix("change-sets/"), importPrepared {
-        if path.hasSuffix("/apply") { applied = true }
+        if path.hasSuffix("/apply") {
+          applied = true
+          if deletionProposed { transactionVoided = true }
+        }
         if path.hasSuffix("/undo") { importUndone = true }
         let result = try encode(importChange())
         if path.hasSuffix("/reject") { importPrepared = false }
@@ -214,12 +227,19 @@
         return try encode(change())
       }
       if path.hasPrefix("change-sets/") {
-        if path.hasSuffix("/apply") { applied = true }
+        if path.hasSuffix("/apply") {
+          applied = true
+          if deletionProposed { transactionVoided = true }
+        }
         return try encode(change())
       }
       if path.hasSuffix("/history-jobs") {
         historyRetried = true
         return try encode(["status": "queued"])
+      }
+      if path.hasPrefix("accounts/"), request.httpMethod == "DELETE" {
+        archived = true
+        return try encode(["isArchived": true])
       }
       if path == "portfolio/dashboard" { return try encode(dashboard(range: range, scope: scope)) }
       if path.hasSuffix("/detail") {
@@ -228,21 +248,68 @@
         return try encode(
           AccountDetail(
             account: account, dashboard: dashboard(range: range, scope: scope),
-            positions: ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+            positions: ProcessInfo.processInfo.arguments.contains("--dydx-layout")
               ? [
                 Position(
-                  assetId: candidateID, symbol: "ETH", name: "Ethereum", assetType: "crypto",
-                  quantity: Amount(0.12), price: nil, marketValue: Amount(503.45), currency: "USD",
-                  costBasis: nil, unrealizedPnl: nil, source: "evm_wallet", observedAt: Date(),
-                  stale: false, side: nil)
-              ] : [],
+                  assetId: candidateID, symbol: "BTC-USD", name: "Bitcoin", assetType: "perp",
+                  quantity: Amount(0.12), price: Amount(60000), marketValue: Amount(7200),
+                  currency: "USD",
+                  costBasis: nil, unrealizedPnl: Amount(200), source: "dydx", observedAt: Date(),
+                  stale: false,
+                  side: "long", entryPrice: Amount(58000), leverage: Amount(2),
+                  liquidationPrice: Amount(40000))
+              ]
+              : ProcessInfo.processInfo.arguments.contains("--csv-account")
+                ? [
+                  Position(
+                    assetId: candidateID, symbol: "AAPL", name: "Apple", assetType: "equity",
+                    quantity: Amount(4), price: Amount(200), marketValue: Amount(800),
+                    currency: "EUR",
+                    costBasis: Amount(700), unrealizedPnl: Amount(100), source: "manual",
+                    observedAt: Date(), stale: false, side: nil)
+                ]
+                : ProcessInfo.processInfo.arguments.contains("--wallet-layout")
+                  ? [
+                    Position(
+                      assetId: candidateID, symbol: "ETH", name: "Ethereum", assetType: "crypto",
+                      quantity: Amount(0.12), price: nil, marketValue: Amount(503.45),
+                      currency: "USD",
+                      costBasis: nil, unrealizedPnl: nil, source: "evm_wallet", observedAt: Date(),
+                      stale: false, side: nil)
+                  ] : [],
             activity: [],
+            derivatives: ProcessInfo.processInfo.arguments.contains("--dydx-layout")
+              ? DerivativesSummary(
+                equity: Amount(3600), freeCollateral: Amount(2000), grossExposure: Amount(7200),
+                effectiveLeverage: Amount(2), currency: "USD", asOf: Date()) : nil,
             historyJob: ProcessInfo.processInfo.arguments.contains("--partial-history")
               ? EVMHistoryJob(
                 status: historyRetried ? "queued" : "partial", phase: "balances", daysDone: 30,
                 totalDays: 90, requestsUsed: 125, dailyRequestLimit: 1000, nextAttemptAt: Date(),
                 error: historyRetried ? nil : "Some historical token prices remain unavailable")
               : nil))
+      }
+      if path.hasPrefix("transactions/") {
+        if request.httpMethod == "DELETE" {
+          deletionProposed = true
+          return try encode(change())
+        }
+        return try encode(
+          Transaction(
+            id: transactionID, accountId: initial.id, assetId: assets[0].id,
+            type: "BUY", occurredAt: Date(), quantity: Amount(2), unitPrice: Amount(100),
+            currency: "USD", source: "manual", isVoided: transactionVoided))
+      }
+      if path == "activity", ProcessInfo.processInfo.arguments.contains("--manual-activity"),
+        !transactionVoided
+      {
+        return try encode([
+          ActivityEvent(
+            id: transactionID, accountId: initial.id, accountName: initial.name,
+            assetClass: "equities", source: "manual", kind: "BUY", at: Date(), quantity: Amount(2),
+            currency: "USD",
+            symbol: "AAPL", isVoided: false, editable: true, transactionId: transactionID)
+        ])
       }
       if path == "portfolio/assets" || path == "activity" { return Data("[]".utf8) }
       throw APIError(message: "No UI fixture for \(path)")
@@ -338,8 +405,9 @@
               at: Date(), value: Amount(435), complete: true, segmentId: "2",
               coverage: ValuationCoverage(valued: ["ETH", "TOKEN"], missing: [])),
           ] : points, allocation: base.allocation,
-        accounts: ([initial] + accounts).map {
+        accounts: (archived ? [] : ([initial] + accounts)).map {
           AccountRow(
+            provider: $0.provider, institution: $0.sourceType == "evm_wallet" ? "Base" : nil,
             id: $0.id, name: $0.name, assetClass: $0.assetClass, sourceType: $0.sourceType,
             value: base.value,
             complete: !partial, asOf: base.asOf, stale: false, unvaluedPositions: partial ? 1 : 0)

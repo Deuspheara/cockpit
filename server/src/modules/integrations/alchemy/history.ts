@@ -107,12 +107,17 @@ export class EVMHistoryService {
     const [budget] = await this.db.sql`UPDATE evm_history_jobs SET
       requests_used=CASE WHEN request_day=CURRENT_DATE THEN requests_used+1 ELSE 1 END,
       request_day=CURRENT_DATE,updated_at=now()
-      WHERE id=${job.id} AND (request_day<>CURRENT_DATE OR requests_used<1000) RETURNING requests_used`;
-    if (!budget)
+      WHERE id=${job.id} AND status='running' AND (request_day<>CURRENT_DATE OR requests_used<1000) RETURNING requests_used`;
+    if (!budget) {
+      const [account] = await this.db
+        .sql`SELECT is_archived FROM accounts WHERE id=${job.accountId}`;
+      if (!account || account.isArchived)
+        throw new AppError("ACCOUNT_ARCHIVED", "Account removed", 409);
       throw new Pause(
         "Daily request limit reached; resumes tomorrow",
         DAY - (Date.now() % DAY),
       );
+    }
     let response: Response;
     try {
       response = await this.transport(url, {

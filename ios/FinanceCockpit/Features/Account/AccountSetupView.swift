@@ -93,7 +93,9 @@ struct AccountSetupView: View {
                 detail: provider == .evmWallet
                   ? (environment.sessionInfo?.walletConfigured == true
                     ? "Track a public wallet"
-                    : "Alchemy not configured. Configure ALCHEMY_API_KEY on the server.")
+                    : environment.advancedMode
+                      ? "Alchemy not configured. Configure ALCHEMY_API_KEY on the server."
+                      : "Wallet connection is unavailable. Check Advanced settings.")
                   : "Sync your account read-only"
               ) {
                 model.draft.provider = provider

@@ -66,6 +66,9 @@ export async function registerFinanceRoutes(
     ),
   );
   app.get("/api/v1/accounts", () => accounts.list());
+  app.delete("/api/v1/accounts/:id", (request) =>
+    accounts.archive(id(request.params)),
+  );
   app.post("/api/v1/accounts", (request) => accounts.create(request.body));
   app.get("/api/v1/accounts/:id", (request) =>
     accounts.get(id(request.params)),
@@ -226,10 +229,28 @@ export async function registerFinanceRoutes(
       portfolio.positions(accountId),
       ledger.list(accountId),
     ]);
+    if (account.isArchived)
+      throw new AppError("NOT_FOUND", "Account removed", 404);
+    const accountPositions = positions.get(accountId) ?? [];
+    let positionLogos = new Map<string, string | null>();
+    if (accountPositions.length) {
+      try {
+        const ids = accountPositions.map((p) => p.assetId);
+        const metadata = await database.sql<
+          Asset[]
+        >`SELECT * FROM assets WHERE id = ANY(${ids}::uuid[])`;
+        positionLogos = await logos.resolveAll(metadata);
+      } catch {
+        /* Logos are optional decoration. */
+      }
+    }
     return {
       account,
       dashboard,
-      positions: positions.get(accountId) ?? [],
+      positions: accountPositions.map((p) => ({
+        ...p,
+        logoUrl: positionLogos.get(p.assetId) ?? null,
+      })),
       derivatives: account.metadata.derivatives ?? null,
       performance: await tradingPerformance(
         database.sql,

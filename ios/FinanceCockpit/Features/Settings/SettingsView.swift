@@ -5,48 +5,61 @@ struct SettingsView: View {
   @State private var error: String?
 
   var body: some View {
+    @Bindable var environment = environment
     Form {
-      Section("Server") {
-        LabeledContent("URL", value: environment.serverURL)
-        Button("Test connection") { Task { await environment.testConnection() } }
-        if let issue = environment.connectionError {
-          Text(issue).foregroundStyle(.red)
-        } else if environment.sessionInfo != nil {
-          HStack(spacing: 8) {
-            AppIcon(name: .connected, size: 18)
-            Text("Connected")
+      Section("Display") {
+        Picker("Interface", selection: $environment.advancedMode) {
+          Text("Simple").tag(false)
+          Text("Advanced").tag(true)
+        }.pickerStyle(.segmented).accessibilityIdentifier("interface-mode")
+      }
+      if environment.advancedMode {
+        Section("Server") {
+          LabeledContent("URL", value: environment.serverURL)
+          Button("Test connection") { Task { await environment.testConnection() } }
+          if let issue = environment.connectionError {
+            Text(issue).foregroundStyle(.red)
+          } else if environment.sessionInfo != nil {
+            HStack(spacing: 8) {
+              AppIcon(name: .connected, size: 18)
+              Text("Connected")
+            }
+            .foregroundStyle(.green)
+            .accessibilityElement(children: .combine)
           }
-          .foregroundStyle(.green)
-          .accessibilityElement(children: .combine)
+          if let at = environment.lastSuccessfulRefresh {
+            LabeledContent(
+              "Last refresh", value: at.formatted(date: .abbreviated, time: .shortened))
+          }
         }
-        if let at = environment.lastSuccessfulRefresh {
-          LabeledContent("Last refresh", value: at.formatted(date: .abbreviated, time: .shortened))
-        }
-      }
 
-      Section("AI · server configuration") {
-        LabeledContent(
-          "OpenRouter key", value: environment.aiAvailability.keyConfigured ? "Ready" : "Missing")
-        LabeledContent(
-          "Assistant", value: environment.aiAvailability.chatConfigured ? "Ready" : "Not ready")
-        LabeledContent(
-          "Screenshot import",
-          value: environment.aiAvailability.visionConfigured ? "Ready" : "Not ready")
-        if let ai = environment.sessionInfo?.ai {
+        Section("AI · server configuration") {
           LabeledContent(
-            "Primary model", value: ai.primaryModel.isEmpty ? "Not set" : ai.primaryModel)
-          LabeledContent("Vision model", value: ai.visionModel.isEmpty ? "Not set" : ai.visionModel)
+            "OpenRouter key", value: environment.aiAvailability.keyConfigured ? "Ready" : "Missing")
+          LabeledContent(
+            "Assistant", value: environment.aiAvailability.chatConfigured ? "Ready" : "Not ready")
+          LabeledContent(
+            "Screenshot import",
+            value: environment.aiAvailability.visionConfigured ? "Ready" : "Not ready")
+          if let ai = environment.sessionInfo?.ai {
+            LabeledContent(
+              "Primary model", value: ai.primaryModel.isEmpty ? "Not set" : ai.primaryModel)
+            LabeledContent(
+              "Vision model", value: ai.visionModel.isEmpty ? "Not set" : ai.visionModel)
+          }
         }
-      }
 
+      }
       Section("Tools") {
-        NavigationLink {
-          BotsView()
-        } label: {
-          SettingsDestinationLabel(title: "Bots", detail: "Paper strategies", icon: .bot)
+        if environment.advancedMode {
+          NavigationLink {
+            BotsView()
+          } label: {
+            SettingsDestinationLabel(title: "Bots", detail: "Paper strategies", icon: .bot)
+          }
+          .accessibilityLabel("Bots")
+          .accessibilityHint("Opens paper strategies")
         }
-        .accessibilityLabel("Bots")
-        .accessibilityHint("Opens paper strategies")
         NavigationLink {
           RecurringView()
         } label: {
@@ -54,24 +67,29 @@ struct SettingsView: View {
             title: "Recurring investments", detail: "Schedules and occurrences", icon: .recurring)
         }
         .accessibilityLabel("Recurring investments")
-        NavigationLink {
-          DiagnosticsView()
-        } label: {
-          SettingsDestinationLabel(
-            title: "Integration diagnostics", detail: "Services and read-only connections",
-            icon: .connected)
+        if environment.advancedMode {
+          NavigationLink {
+            DiagnosticsView()
+          } label: {
+            SettingsDestinationLabel(
+              title: "Integration diagnostics", detail: "Services and read-only connections",
+              icon: .connected)
+          }
+          .accessibilityLabel("Integration diagnostics")
         }
-        .accessibilityLabel("Integration diagnostics")
       }
 
       Section("Data") {
         Button("Refresh portfolio") { environment.dataRevision += 1 }
-        LabeledContent(
-          "Public wallet indexer",
-          value: environment.sessionInfo?.walletConfigured == true ? "Configured" : "Not configured"
-        )
+        if environment.advancedMode {
+          LabeledContent(
+            "Public wallet indexer",
+            value: environment.sessionInfo?.walletConfigured == true
+              ? "Configured" : "Not configured"
+          )
+        }
         LabeledContent("App version", value: "0.1.0")
-        Button("Remove device credentials", role: .destructive) {
+        Button("Disconnect this device", role: .destructive) {
           Task {
             do { try await environment.logout() } catch { self.error = error.localizedDescription }
           }

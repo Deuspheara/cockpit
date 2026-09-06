@@ -155,10 +155,13 @@ struct ActivityView: View {
           Section(section.title) {
             ForEach(section.events) { item in
               if item.editable, let id = item.transactionId {
-                NavigationLink {
-                  TransactionEditView(transactionID: id)
-                } label: {
-                  ActivityEventRow(event: item)
+                VStack(alignment: .leading, spacing: 8) {
+                  NavigationLink {
+                    TransactionEditView(transactionID: id)
+                  } label: {
+                    ActivityEventRow(event: item)
+                  }
+                  TransactionDeleteButton(transactionID: id).font(.caption).buttonStyle(.borderless)
                 }
               } else {
                 ActivityEventRow(event: item)
@@ -213,8 +216,9 @@ struct ActivityView: View {
 
   private var filteredActivity: [ActivityEvent] {
     activity.filter {
-      $0.matches(
-        searchText: searchText, accountID: accountID, assetClass: assetClass, source: source)
+      !$0.isVoided
+        && $0.matches(
+          searchText: searchText, accountID: accountID, assetClass: assetClass, source: source)
     }
   }
 
@@ -321,6 +325,7 @@ private struct ActivityFilterView: View {
 
 struct ActivityEventRow: View {
   let event: ActivityEvent
+  @Environment(AppEnvironment.self) private var environment
 
   var body: some View {
     let presentation = ActivityPresentation.resolve(kind: event.kind)
@@ -341,9 +346,12 @@ struct ActivityEventRow: View {
               .background(Color.secondary.opacity(0.12), in: Capsule())
           }
         }
-        Text("\(event.accountName) · \(sourceDisplayName(event.source))")
-          .font(.caption)
-          .foregroundStyle(.secondary)
+        Text(
+          environment.advancedMode
+            ? "\(event.accountName) · \(sourceDisplayName(event.source))" : event.accountName
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
         Text(event.at.formatted(date: .omitted, time: .shortened))
           .font(.caption)
           .foregroundStyle(.tertiary)
@@ -364,13 +372,15 @@ struct ActivityEventRow: View {
 
 struct ActivityRow: View {
   let transaction: Transaction
+  @Environment(AppEnvironment.self) private var environment
   var body: some View {
     HStack {
       VStack(alignment: .leading, spacing: 4) {
         Text(ActivityPresentation.resolve(kind: transaction.type).title)
           .font(.subheadline.weight(.medium))
         Text(
-          "\(transaction.occurredAt.formatted(date: .abbreviated, time: .omitted)) · \(sourceDisplayName(transaction.source))"
+          transaction.occurredAt.formatted(date: .abbreviated, time: .omitted)
+            + (environment.advancedMode ? " · " + sourceDisplayName(transaction.source) : "")
         )
         .font(.caption)
         .foregroundStyle(.secondary)

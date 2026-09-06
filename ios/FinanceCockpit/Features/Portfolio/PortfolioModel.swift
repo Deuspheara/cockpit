@@ -15,7 +15,13 @@ final class PortfolioModel {
   var error: String? { snapshot.error ?? previewError }
   var previewError: String?
   var key: String { "portfolio-\(scope.rawValue)-\(range.rawValue)" }
-  func load(api: APIClient, cache: AppCache?) async {
+  private var revision = 0
+  func load(api: APIClient, cache: AppCache?, revision: Int = 0) async {
+    if self.revision != revision {
+      snapshot.invalidate()
+      self.revision = revision
+    }
+    let cacheGeneration = await cache?.generation
     let key = self.key
     let scope = self.scope
     let range = self.range
@@ -30,6 +36,6 @@ final class PortfolioModel {
             URLQueryItem(name: "range", value: range.rawValue),
           ])
       },
-      save: { await cache?.write($0, key: key) })
+      save: { await cache?.write($0, key: key, generation: cacheGeneration) })
   }
 }

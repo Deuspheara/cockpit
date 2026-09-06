@@ -14,9 +14,9 @@ export class LedgerService {
     return accountId
       ? this.database.sql<
           Transaction[]
-        >`SELECT * FROM transactions WHERE account_id=${accountId} ORDER BY occurred_at DESC,id LIMIT 500`
+        >`SELECT t.* FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE t.account_id=${accountId} AND NOT a.is_archived AND NOT t.is_voided ORDER BY t.occurred_at DESC,t.id LIMIT 500`
       : this.database.sql<
           Transaction[]
-        >`SELECT * FROM transactions ORDER BY occurred_at DESC,id LIMIT 500`;
+        >`SELECT t.* FROM transactions t JOIN accounts a ON a.id=t.account_id WHERE NOT a.is_archived AND NOT t.is_voided ORDER BY t.occurred_at DESC,t.id LIMIT 500`;
   }
 }

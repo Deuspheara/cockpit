@@ -69,7 +69,7 @@ export class SyncService {
       .sql`UPDATE sync_runs SET status='failed',finished_at=now(),details='{"failure":{"code":"SYNC_INTERRUPTED","message":"Synchronization interrupted. Retry available.","retryable":true}}' WHERE status='running' AND started_at<now()-interval '15 minutes'`;
     for (let index = 0; index < 20; index++) {
       const [run] = await this.database
-        .sql`UPDATE sync_runs SET status='running',started_at=now() WHERE id=(SELECT id FROM sync_runs WHERE status='queued' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,account_id`;
+        .sql`UPDATE sync_runs SET status='running',started_at=now() WHERE id=(SELECT id FROM sync_runs WHERE status='queued' AND account_id IN (SELECT id FROM accounts WHERE NOT is_archived) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING id,account_id`;
       if (!run) break;
       try {
         await this.sync(String(run.accountId), String(run.id));
@@ -146,6 +146,9 @@ export class SyncService {
       const observedAt = new Date();
       await this.database.sql.begin(async (tx) => {
         await tx`SELECT pg_advisory_xact_lock(64023002)`;
+        const [active] =
+          await tx`SELECT id FROM accounts WHERE id=${accountId} AND NOT is_archived FOR UPDATE`;
+        if (!active) throw new ConflictError("Account removed");
         const seen = new Set<string>();
         for (const p of result.positions) {
           const assetId = await this.asset(tx, p.asset);
@@ -230,7 +233,7 @@ export class SyncService {
             : true,
       };
       await this.database
-        .sql`UPDATE sync_runs SET status='failed',error_message=${message},details=${this.database.sql.json({ failure, ...(error instanceof AppError ? (error.details as Record<string, unknown>) : {}) })},finished_at=now() WHERE id=${runId}`;
+        .sql`UPDATE sync_runs SET status='failed',error_message=${message},details=${this.database.sql.json({ failure, ...(error instanceof AppError ? (error.details as Record<string, unknown>) : {}) })},finished_at=now() WHERE id=${runId} AND status='running'`;
       try {
         await this.cache.incr("portfolio:revision");
       } catch {}

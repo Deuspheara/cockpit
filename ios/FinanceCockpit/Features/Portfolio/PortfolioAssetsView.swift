@@ -13,6 +13,8 @@ struct PortfolioAssetLine: Decodable, Identifiable, Sendable {
   let source: String
   let stale: Bool
   var logoUrl: String? = nil
+  var assetType: String? = nil
+  var side: String? = nil
 }
 struct PortfolioAssetsView: View {
   let scope: PortfolioScope
@@ -62,38 +64,66 @@ struct PortfolioAssetsView: View {
 struct PortfolioAssetRow: View {
   let line: PortfolioAssetLine
   var logoLoader: AssetLogoLoader = .shared
+  @Environment(AppEnvironment.self) private var environment
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   var body: some View {
-    HStack(alignment: .top, spacing: 12) {
-      AssetLogo(symbol: line.symbol, urlString: line.logoUrl, loader: logoLoader)
-      VStack(alignment: .leading, spacing: 4) {
-        Text(line.symbol).font(.headline)
-        Text(
-          line.quantity.map { "\(line.accountName) · \(FinanceFormat.quantity($0)) units" }
-            ?? "\(line.accountName) · Quantity unknown"
-        )
-          .font(.caption).foregroundStyle(.secondary)
-        Text("\(line.source)\(line.stale ? " · Stale" : "")")
-          .font(.caption).foregroundStyle(.secondary)
-        if dynamicTypeSize.isAccessibilitySize { value }
+    VStack(alignment: .leading, spacing: 4) {
+      HoldingSummaryRow(
+        name: line.name, symbol: line.symbol, logoUrl: line.logoUrl,
+        quantity: line.quantity, value: line.marketValue, currency: line.currency,
+        side: line.side, exposure: line.assetType == "perp", loader: logoLoader)
+      if environment.advancedMode {
+        Text("\(line.accountName) · \(line.source)").font(.caption).foregroundStyle(.secondary)
+      } else if line.stale {
+        Text("Update needed").font(.caption).foregroundStyle(.secondary)
       }
-      if !dynamicTypeSize.isAccessibilitySize {
-        Spacer(minLength: 8)
-        value
-      }
-    }
-    .padding(.vertical, 5)
-    .frame(minHeight: 44)
-    .contentShape(Rectangle())
-    .accessibilityElement(children: .combine)
+    }.padding(.vertical, 6)
   }
+}
 
-  private var value: some View {
-    Text(
-      line.marketValue.map { FinanceFormat.amount($0, currency: line.currency) } ?? "Unavailable"
-    )
-    .monospacedDigit()
-    .fixedSize(horizontal: false, vertical: true)
+enum HoldingPresentation {
+  static func name(_ name: String, symbol: String) -> String {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    return trimmed.isEmpty ? symbol : trimmed
+  }
+}
+
+struct HoldingSummaryRow: View {
+  let name: String
+  let symbol: String
+  let logoUrl: String?
+  let quantity: Amount?
+  let value: Amount?
+  let currency: String
+  var side: String? = nil
+  var exposure = false
+  var loader: AssetLogoLoader = .shared
+  @Environment(\.dynamicTypeSize) private var typeSize
+  var body: some View {
+    HStack(alignment: .top, spacing: 12) {
+      AssetLogo(symbol: symbol, urlString: logoUrl, loader: loader)
+      VStack(alignment: .leading, spacing: 4) {
+        Text(HoldingPresentation.name(name, symbol: symbol)).font(.headline)
+        Text(
+          [symbol, side?.capitalized, quantity.map { FinanceFormat.quantity($0) }]
+            .compactMap { $0 }.joined(separator: " · ")
+        )
+        .font(.caption).foregroundStyle(.secondary)
+        if typeSize.isAccessibilitySize { amount }
+      }
+      if !typeSize.isAccessibilitySize {
+        Spacer(minLength: 8)
+        amount
+      }
+    }.frame(minHeight: 44).contentShape(Rectangle())
+      .accessibilityElement(children: .combine)
+  }
+  private var amount: some View {
+    VStack(alignment: typeSize.isAccessibilitySize ? .leading : .trailing, spacing: 4) {
+      Text(value.map { FinanceFormat.amount($0, currency: currency) } ?? "Unavailable")
+        .monospacedDigit().fixedSize(horizontal: false, vertical: true)
+      if exposure { Text("Exposure").font(.caption).foregroundStyle(.secondary) }
+    }
   }
 }

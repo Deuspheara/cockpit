@@ -104,3 +104,21 @@ Restore only into the intended stopped deployment and an empty database: `docker
 - This Mac has Xcode 27 beta. Builds/tests use that compiler with iOS 26 deployment and an installed iOS 26.5 runtime. Stable Xcode release validation, physical-device signing and actual VPS/TLS deployment remain environment checks.
 
 Base wallet pricing recovery, partial charts, historical backfill limits, and the production release procedure are documented in [Base wallet history](docs/base-wallet-history.md).
+
+### Simple and Advanced interface
+
+The iOS app starts in **Simple**. Change **Settings → Interface** to Advanced to
+show trading analytics, leverage, collateral, provider history, and server
+configuration. The choice is saved on the device. Both modes use the same balances
+and historical data; chart smoothing does not fill coverage gaps.
+
+Account actions live in the account’s **…** menu. **Remove account** archives it,
+removes it from portfolio/activity, and stops background updates while retaining
+its records. There is no permanent-delete or restoration interface. Migration
+`0013_account_archive_guards.sql` must be applied with the normal server migration
+step before using account removal.
+
+Manual transactions (including Trade Republic CSV imports) can be deleted from
+their detail screen or with activity swipe/context actions. One confirmation
+applies an audited void and recalculates holdings; imported transaction identifiers
+are retained to prevent reimport. Connected-provider transactions remain read-only.

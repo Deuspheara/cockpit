@@ -75,6 +75,8 @@ struct Allocation: Codable, Identifiable, Sendable {
   let percentage: Amount
 }
 struct AccountRow: Codable, Identifiable, Sendable {
+  var provider: String? = nil
+  var institution: String? = nil
   let id: UUID
   let name: String
   let assetClass: String
@@ -94,6 +96,7 @@ struct AccountRow: Codable, Identifiable, Sendable {
   }
 }
 struct Account: Codable, Identifiable, Sendable {
+  var institution: String? = nil
   var provider: String? = nil
   var connectionType: String? = nil
   var providerAccountKey: String? = nil
@@ -132,6 +135,7 @@ struct Position: Codable, Identifiable, Sendable {
   var leverage: Amount? = nil
   var liquidationPrice: Amount? = nil
   var realizedPnl: Amount? = nil
+  var logoUrl: String? = nil
 }
 struct Transaction: Codable, Identifiable, Sendable {
   let id: UUID
@@ -144,6 +148,9 @@ struct Transaction: Codable, Identifiable, Sendable {
   let currency: String
   let source: String
   let isVoided: Bool
+  var externalId: String? = nil
+  var provider: String? = nil
+  var allowsManualCorrection: Bool { externalId == nil || provider == "trade_republic" }
 }
 struct AccountDetail: Codable, Sendable {
   let account: Account

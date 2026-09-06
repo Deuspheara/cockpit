@@ -35,7 +35,8 @@ extension PortfolioDashboard {
 private struct ChartPreview: View {
   @State private var range: PortfolioRange = .month
   var body: some View {
-    ScrollView { PortfolioValueChart(dashboard: .preview, range: $range).padding(20) }
+    ScrollView { PortfolioValueChart(dashboard: .preview, range: $range).padding(20) }.environment(
+      AppEnvironment())
   }
 }
 #Preview("Portfolio chart · Light") { ChartPreview() }
